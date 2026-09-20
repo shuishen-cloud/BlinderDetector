@@ -58,6 +58,31 @@ FALL_SUSPECTED = "suspected"  # 检测到冲击，语音询问中 —— ★ 此
 FALL_CONFIRMED = "confirmed"  # 用户未在截止前响应，确认跌倒
 FALL_CANCELLED = "cancelled"  # 用户显式取消（★ 端侧本地完成，不依赖网络）
 
+# 求助触发方式。
+# ★ 「长按手机侧键 3 秒」在微信小程序和 Web 上都没有对应 API，
+#   所以触发方式是**可协商的集合**，不是写死的常量。端上有什么能力
+#   就上报什么，契约不绑定具体触发通道。冗余触发是安全系统的基本要求 ——
+#   单一触发通道等于单点故障。
+TRIGGER_HARDWARE_KEY = "hardware_key_long"  # 仅 Android 原生
+TRIGGER_SCREEN_LONG = "screen_long_press"  # 全端可用（需屏幕）
+TRIGGER_SHAKE = "shake_pattern"  # 需 IMU
+TRIGGER_VOICE = "voice_trigger"  # 需麦克风
+TRIGGER_FALL = "fall_confirmed"  # 由跌倒状态机产生
+
+TRIGGERS = (
+    TRIGGER_HARDWARE_KEY,
+    TRIGGER_SCREEN_LONG,
+    TRIGGER_SHAKE,
+    TRIGGER_VOICE,
+    TRIGGER_FALL,
+)
+
+# 求助通知范围
+SCOPE_FAMILY = "family"
+SCOPE_GRID_WORKER = "grid_worker"
+SCOPE_BOTH = "both"
+SCOPE_NONE = "none"
+
 # 障碍物类型
 OBSTACLE_TYPES = (
     "step_up",

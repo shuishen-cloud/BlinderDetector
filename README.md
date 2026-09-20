@@ -42,6 +42,7 @@ bash scripts/make_test_video.sh      # 首次会自动装 librsvg / ffmpeg
 ```bash
 python scripts/run_video.py data/demo.mp4
 python scripts/run_video.py data/frames --source images    # 也可以用图片序列
+python scripts/demo_fall.py                                # 跌倒全流程演示
 ```
 
 另开一个终端看实时推流：
@@ -87,16 +88,28 @@ app/
   core/
     registry.py         实现注册表
     arbiter.py          ★ 播报仲裁器
+    rules/              ★ 各层业务规则（可单独测试）
+      risk.py             障碍物风险分级（悲观距离、置信度门限、TTL）
+      phrasing.py         措辞生成（不播数字、置信度对冲、短句降级）
+      scene.py            场景分类（决定去重粒度）
+      fall.py             跌倒状态机
+      sos.py              求助状态机（幂等、升级链）
+      route.py            无障碍路线规划
+    layers/             四层编排（薄）
     providers/          VLM 实现（mock / dashscope / zhipu / openai）
-    layers/             四层实现
+    detectors/          障碍物检测器实现
     sources/            输入源（video / images）
   mock/fixtures.py      契约样例数据
 assets/                 测试素材（手写 SVG）
 data/                   生成的帧和视频
-scripts/                自检、跑视频、WS 探针、契约导出
+scripts/                自检、跑视频、跌倒演示、WS 探针、契约导出
 tests/                  pytest
 docs/api-contract.md    自动生成的接口契约
 ```
+
+**规则和编排是分开的**：`detectors/` 只回答「看到什么」，`rules/` 回答
+「怎么判断危险、怎么说出来」，`layers/` 只做编排。换检测模型时安全策略
+不会跟着变，而且规则层可以脱离框架单独测试。
 
 ---
 
@@ -138,7 +151,13 @@ pytest -v
 | :--- | :--- |
 | `test_contracts.py` | 契约形状、距离档位、去重键 |
 | `test_arbiter.py` | 仲裁四条规则（打断 / 去重 / TTL / 积压） |
-| `test_api.py` | 七条路由的形状一致性 + WebSocket 广播 |
+| `test_api.py` | 九条路由的形状一致性 + WebSocket 广播 |
+| `test_risk.py` | 悲观距离分级、置信度门限、TTL |
+| `test_phrasing.py` | 不播数字、置信度对冲、短句降级 |
+| `test_scene.py` | 场景分类与去重粒度 |
+| `test_fall.py` | 跌倒状态机（覆盖最全） |
+| `test_sos.py` | 幂等、升级链、绝不自动拨 120 |
+| `test_route.py` | 无障碍过滤、导航播报 |
 
 ---
 

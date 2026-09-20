@@ -160,17 +160,51 @@ DOC = f"""# 灵眸伴途 —— 接口契约
 
 ## 4. HTTP 路由
 
-| 方法 | 路径 | 入 | 出 |
-| :--- | :--- | :--- | :--- |
-| `POST` | `/v1/perception/describe` | `Frame` | `Announcement` |
-| `POST` | `/v1/safety/analyze` | `Frame` | `Announcement` |
-| `POST` | `/v1/safety/fall` | `Frame` | `Announcement` |
-| `POST` | `/v1/navigation/route` | `Frame` | `Announcement` |
-| `POST` | `/v1/emergency/sos` | `Frame` | `Announcement` |
-| `GET` | `/v1/health` | — | 降级状态 |
-| `WS` | `/v1/stream` | — | 推 `Announcement` |
+| 方法 | 路径 | 入 | 出 | 说明 |
+| :--- | :--- | :--- | :--- | :--- |
+| `POST` | `/v1/perception/describe` | `Frame` | `Announcement` | 第一层 环境感知 |
+| `POST` | `/v1/safety/analyze` | `Frame` | `Announcement` | 第二层 安全预警 |
+| `POST` | `/v1/safety/fall` | `Frame` | `Announcement` | 第二层 跌倒检测 |
+| `POST` | `/v1/navigation/route` | `Frame` | `Announcement` | 第三层 智能导航 |
+| `POST` | `/v1/emergency/sos` | `Frame` | `Announcement` | 第四层 一键求助 |
+| `POST` | `/v1/emergency/cancel` | `Frame` | `Announcement` | 取消求助 / 取消跌倒确认 |
+| `POST` | `/v1/emergency/tick` | `{"now_ms"}` | `Announcement[]` | 推进紧急状态机时钟 |
+| `GET` | `/v1/health` | — | 降级状态 | |
+| `WS` | `/v1/stream` | — | 推 `Announcement` | |
 
 **路由可能返回空的 `announcements` 数组**（比如前方无障碍），这不代表出错。
+「没出声」和「系统哑了」的区分靠 `/v1/health` 和降级通告。
+
+### 4.1 `Frame.extra` 的约定字段
+
+`Frame` 只有五个字段，各层的差异化入参统一放 `extra`：
+
+| 层 | 字段 | 说明 |
+| :--- | :--- | :--- |
+| 通用 | `index` | 帧序号，测试素材按它轮换场景 |
+| 感知 | — | 只用 `image_ref` |
+| 导航 | `destination` | 目的地（自然语言） |
+| 导航 | `geo` | `{"lat", "lng"}` 起点坐标 |
+| 导航 | `avoid` | 要避开的障碍，默认 `["overpass","underpass","stairs"]` |
+| 求助 | `kind` | `fall_signal` \\| `sos` \\| `cancel` |
+| 求助 | `signal` | 跌倒传感器窗口，见下 |
+| 求助 | `event_id` | 事件标识，不填则由 `frame_id` 推导 |
+| 求助 | `idempotency_key` | ★ 幂等键，防止重试导致重复呼叫家属 |
+| 求助 | `trigger` | 触发方式，见 §4.2 |
+| 求助 | `method` | 取消方式：`voice` \\| `shake` \\| `screen_tap` \\| `hardware_key` |
+
+跌倒传感器窗口 `signal` 的字段：
+`peak_g`、`free_fall_ms`、`posture`、`post_impact_still_ms`、
+`movement_class`（`still` \\| `walking` \\| `vehicle` \\| `handheld` \\| `unknown`）、
+`on_charger`、`screen_on`。
+
+### 4.2 求助触发方式
+
+{", ".join(f"`{t}`" for t in C.TRIGGERS)}
+
+> ★ **「长按手机侧键 3 秒」在微信小程序和 Web 上都没有对应 API。**
+> 所以触发方式是**可协商的集合**而不是常量，端上有什么能力就上报什么。
+> 冗余触发是安全系统的基本要求 —— 单一触发通道等于单点故障。
 
 ---
 

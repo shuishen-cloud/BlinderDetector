@@ -22,7 +22,11 @@ from app.mock import fixtures as F
 class MockVLM:
     async def describe_frame(self, frame: Frame, image: bytes) -> dict[str, Any]:
         index = int(frame.extra.get("index", 0))
-        return F.perception_for_index(index).detail
+        detail = dict(F.perception_for_index(index).detail)
+        # ★ 真实 VLM 不会返回我们内部的 scene_key —— 它是从 objects/ocr
+        #   推导出来的。这里也去掉，让 layer 真正跑一遍分类逻辑。
+        detail.pop("scene_key", None)
+        return detail
 
     async def health(self) -> bool:
         return True

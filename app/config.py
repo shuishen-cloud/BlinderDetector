@@ -10,6 +10,7 @@ load_dotenv()
 
 # 实现选择（见 app/core/registry.py）
 VLM_PROVIDER: str = os.getenv("VLM_PROVIDER", "mock")
+DETECTOR: str = os.getenv("DETECTOR", "mock")
 FRAME_SOURCE: str = os.getenv("FRAME_SOURCE", "video")
 
 # 云端 VLM（本期不接，仅占位。三家都提供 OpenAI 兼容端点）
