@@ -1,7 +1,9 @@
 """图片序列输入源 —— 读一个目录里的图片，按文件名排序逐帧产出。
 
-    FRAME_SOURCE=images
-    python scripts/run_video.py data/frames
+    from app.core.registry import get
+    src = get("framesource", "images", path="data/frames")
+    for frame in src:
+        ...   # frame 与视频源产出的完全一致
 """
 
 from __future__ import annotations

@@ -1,12 +1,8 @@
-# 灵眸伴途 —— 后端依赖
+# 灵眸伴途（简化版）—— 后端依赖
 #
-# ★ 本文件所有包均为纯 Python wheel，Termux (android_arm64_v8a / bionic libc)
-#   上零编译安装。
-#
-# ★ 严禁引入：fastapi / pydantic —— 它们依赖 pydantic-core (Rust)，
-#   PyPI 只提供 manylinux (glibc) wheel，与 Termux 的 bionic libc 不兼容，
-#   会强制源码编译 Rust。契约层用标准库 dataclass 替代。
-#
+# ★ 全部为纯 Python wheel，零编译。
+# ★ 严禁引入 fastapi / pydantic：它们依赖 pydantic-core (Rust)，
+#   PyPI 只有 manylinux (glibc) wheel，在 Termux (bionic libc) 上装不了。
 # ★ uvicorn 不要带 [standard] extra —— 会拉 httptools / uvloop 等 C 扩展。
 
 starlette>=0.40
@@ -15,17 +11,9 @@ httpx>=0.27
 python-dotenv>=1.0
 
 # ★ WebSocket 实现，不要删。
-#   uvicorn 默认的 --ws auto 需要在 websockets / wsproto 里挑一个，
-#   两个都没装时 /v1/stream 直接 404（pytest 用 TestClient 走进程内，
-#   不经过 uvicorn，所以单元测试全绿也发现不了）。
-#   选 wsproto 而不是 websockets：wsproto 是 py3-none-any 纯 Python，
-#   websockets 是 cpXXX-manylinux 的 C 扩展 wheel，Termux 上要编译。
+#   uvicorn 默认 --ws auto 要在 websockets / wsproto 里挑一个，
+#   两个都没装时 /v1/stream 直接 404。wsproto 是纯 Python，Termux 可装。
 wsproto>=1.2
-
-# ★ multipart 解析，POST /v1/frame 收摄像头/视频帧要用，不要删。
-#   Starlette 的 request.form() 缺它会直接抛 assert。同样地，
-#   TestClient 走进程内也测不出「装没装」这件事。
-python-multipart>=0.0.18
 
 # 测试
 pytest>=8.0

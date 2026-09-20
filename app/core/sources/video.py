@@ -3,8 +3,10 @@
 用 ffmpeg 抽帧到临时目录，再按序产出 Frame —— 产出的 Frame 和
 ImageSequenceSource 完全一致，下游无感。
 
-    FRAME_SOURCE=video
-    python scripts/run_video.py data/demo.mp4
+    from app.core.registry import get
+    src = get("framesource", "video", path="data/demo.mp4", fps=1.0)
+    for frame in src:
+        ...   # frame 与图片序列源产出的完全一致
 """
 
 from __future__ import annotations
