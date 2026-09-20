@@ -37,6 +37,29 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 
 ---
 
+## 前端调试台
+
+起服务后直接开 **<http://127.0.0.1:8000/>**：
+
+```bash
+uvicorn app.main:app --host 0.0.0.0 --port 8000
+```
+
+单文件、零构建、零 npm（`web/index.html`）。它**不是交付形态**，只用来把
+「帧 → 后端 → 播报 → WS 推流」这条链路跑通并肉眼验证契约。
+
+- **帧源 ①视频抽帧** —— 读 `data/demo.mp4`，感知/安全两条流水线**各自独立
+  发包**（频率可调），这就是 design.md D2 的两条解耦流水线。
+  视频 404 就先跑 `bash scripts/make_test_video.sh`。
+- **帧源 ②摄像头** —— 只留接口占位。接入时换成 `getUserMedia` 取流，
+  复用同一个 `sendFrame()`，后端不用改。
+- **帧源 ③单张图片** —— 拖拽即可，不依赖 demo.mp4。
+
+端侧发图走**统一入口 `POST /v1/frame`**（multipart），字段见
+[docs/api-contract.md](docs/api-contract.md) §4.0。
+
+---
+
 ## 跑一遍测试素材
 
 先生成测试视频（手写 SVG → PNG → mp4）：
@@ -79,6 +102,10 @@ Announcement  所有接口的输出
 - **感知与安全是两条解耦的流水线。** 云端 VLM 单次调用 1–3 秒，对避障来说
   完全不可接受，所以第二层绝不能走 VLM。这是本项目最重要的架构主张。
 - **TTL 过期即丢。** 迟到 3 秒的「前方 2 米有台阶」比不播更危险。
+  由**端侧**执行（契约里 `ttl_ms` 就是「从端收到起算」）—— 服务端不排队，
+  也就不存在「排到他时已过期」这回事。
+- **服务端只做闸门。** 只去重、丢废数据；排序 / 打断 / 积压归端侧。
+  详见 [docs/design.md](docs/design.md) D11 —— 那里记着为什么。
 - **去重键必须含风险等级和距离档位。** 否则风险升级会被当成「同一物体的
   重复」吞掉 —— 被吞的恰恰是最危险那条。
 - **跌倒 `suspected` 态永不自动外呼。** 真跌倒和「把手机扔到床上」在加速度计
@@ -95,7 +122,7 @@ app/
   main.py               Starlette 装配
   core/
     registry.py         实现注册表
-    arbiter.py          ★ 播报仲裁器
+    arbiter.py          ★ 播报闸门（只做去重 + 废数据过滤）
     rules/              ★ 各层业务规则（可单独测试）
       risk.py             障碍物风险分级（悲观距离、置信度门限、TTL）
       phrasing.py         措辞生成（不播数字、置信度对冲、短句降级）
@@ -108,8 +135,9 @@ app/
     detectors/          障碍物检测器实现
     sources/            输入源（video / images）
   mock/fixtures.py      契约样例数据
+web/index.html          ★ 前端调试台（单文件，零构建）
 assets/                 测试素材（手写 SVG）
-data/                   生成的帧和视频
+data/                   生成的帧和视频；uploads/ 是上传帧的临时落盘处
 scripts/                自检、跑视频、跌倒演示、WS 探针、契约导出
 tests/                  pytest
 docs/api-contract.md    自动生成的接口契约
@@ -184,8 +212,8 @@ pytest -v
 | 文件 | 测什么 |
 | :--- | :--- |
 | `test_contracts.py` | 契约形状、距离档位、去重键 |
-| `test_arbiter.py` | 仲裁四条规则（打断 / 去重 / TTL / 积压） |
-| `test_api.py` | 九条路由的形状一致性 + WebSocket 广播 |
+| `test_arbiter.py` | 闸门：去重窗口、升级突破去重、废数据 |
+| `test_api.py` | 全部路由的形状一致性、`/v1/frame` 上传（含 400 分支）、WebSocket 广播、静态托管 |
 | `test_risk.py` | 悲观距离分级、置信度门限、TTL |
 | `test_phrasing.py` | 不播数字、置信度对冲、短句降级 |
 | `test_scene.py` | 场景分类与去重粒度 |

@@ -19,7 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from app.core import registry  # noqa: E402
 from app.core.arbiter import Arbiter  # noqa: E402
 
-MARK = {"spoken": "\033[32m▶ 播报\033[0m", "queued": "\033[33m… 排队\033[0m"}
+MARK = {"sent": "\033[32m▶ 发出\033[0m"}
 
 
 def parse_args() -> argparse.Namespace:
@@ -69,13 +69,9 @@ async def main() -> int:
                 verdict = arb.submit(ann, frame.ts)
                 tag = MARK.get(verdict, f"\033[31m✕ {verdict}\033[0m")
                 print(f"  {layer.source:11s} {tag}  {ann.text}")
-        # 模拟当前播报在下一帧到来前播完
-        nxt = arb.finish_current(frame.ts + 1000)
-        if nxt is not None:
-            print(f"  {'(接续)':11s} {MARK['spoken']}  {nxt.text}")
 
     print("\n" + "=" * 68)
-    print(f"共播出 {len(arb.spoken)} 条，丢弃 {len(arb.dropped)} 条")
+    print(f"共发出 {len(arb.sent)} 条，丢弃 {len(arb.dropped)} 条")
     if arb.dropped:
         print("丢弃原因：")
         for ann, reason in arb.dropped:

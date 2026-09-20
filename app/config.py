@@ -23,5 +23,9 @@ VLM_TIMEOUT_MS: int = int(os.getenv("VLM_TIMEOUT_MS", "8000"))
 HOST: str = os.getenv("HOST", "0.0.0.0")
 PORT: int = int(os.getenv("PORT", "8000"))
 
+# 跨源。默认 * 只适合开发 —— 前端由本服务同源托管时其实用不到，
+# 但允许 file:// 直接打开调试台，以及将来 App 端跨源访问。
+CORS_ORIGINS: str = os.getenv("CORS_ORIGINS", "*")
+
 # 素材路径
 FRAMES_DIR: str = os.getenv("FRAMES_DIR", "data/frames")

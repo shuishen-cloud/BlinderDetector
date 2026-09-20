@@ -1,4 +1,8 @@
-"""仲裁器测试 —— 时序全部显式构造，不依赖真实时钟。"""
+"""闸门测试 —— 时序全部显式构造，不依赖真实时钟。
+
+闸门只回答「这条值不值得发给端侧」：去重 + 废数据。
+排序 / 打断 / 积压 / 到期不补播都在端侧，不在这里测。
+"""
 
 from app.contracts import (
     PRIORITY_BACKGROUND,
@@ -8,7 +12,6 @@ from app.contracts import (
     RISK_DANGER,
     RISK_INFO,
     RISK_WARNING,
-    SOURCE_PERCEPTION,
     SOURCE_SAFETY,
     Announcement,
     make_dedup_key,
@@ -24,42 +27,29 @@ def ann(priority=PRIORITY_NORMAL, dedup_key="k", ttl_ms=5000, aid="a", text="t")
 
 
 # --------------------------------------------------------------------------
-# 规则 3：优先级打断
+# 放行
 # --------------------------------------------------------------------------
 
 
-def test_critical_interrupts_background_scene_description():
-    """用户正在听场景描述，检测到台阶 -> 必须立刻打断"""
+def test_new_key_is_sent():
     arb = Arbiter()
-    scene = ann(PRIORITY_BACKGROUND, "vision:scene", aid="scene")
-    arb.submit(scene, T0)
-
-    step = ann(PRIORITY_CRITICAL, "obstacle:step:center:danger:close", aid="step")
-    result = arb.submit(step, T0 + 1000)  # 已超过 min_play_ms
-
-    assert result == "spoken"
-    assert arb.current().id == "step"
-    assert "interrupted" in [r for _, r in arb.dropped]
+    assert arb.submit(ann(dedup_key="k1", aid="a1"), T0) == "sent"
+    assert [a.id for a in arb.sent] == ["a1"]
 
 
-def test_lower_priority_cannot_interrupt():
+def test_priority_does_not_gate_anything():
+    """★ 闸门不看优先级 —— 判断「该不该打断」是端侧的事。
+
+    服务端把高优先级和低优先级都发出去，端侧按 priority 决定怎么播。
+    """
     arb = Arbiter()
-    arb.submit(ann(PRIORITY_CRITICAL, "k1", aid="critical"), T0)
-    result = arb.submit(ann(PRIORITY_BACKGROUND, "k2", aid="bg"), T0 + 1000)
-    assert result == "queued"
-    assert arb.current().id == "critical"
-
-
-def test_min_play_ms_blocks_barge_in():
-    """刚开口就被打断会让用户听到碎片，min_play_ms 期间不允许抢占"""
-    arb = Arbiter(min_play_ms=800)
-    arb.submit(ann(PRIORITY_BACKGROUND, "k1", aid="bg"), T0)
-    result = arb.submit(ann(PRIORITY_CRITICAL, "k2", aid="critical"), T0 + 200)
-    assert result == "queued", "min_play_ms 内不该被抢占"
+    assert arb.submit(ann(PRIORITY_BACKGROUND, "k1", aid="bg"), T0) == "sent"
+    assert arb.submit(ann(PRIORITY_CRITICAL, "k2", aid="crit"), T0 + 100) == "sent"
+    assert {a.id for a in arb.sent} == {"bg", "crit"}
 
 
 # --------------------------------------------------------------------------
-# 规则 2：去重 + ★ 升级必须突破去重
+# 去重
 # --------------------------------------------------------------------------
 
 
@@ -69,15 +59,24 @@ def test_duplicate_within_window_is_dropped():
     result = arb.submit(ann(PRIORITY_IMPORTANT, "same", aid="a2"), T0 + 500)
 
     assert result == "dropped:duplicate"
-    assert ("a2" not in arb.spoken_ids)
-    assert [a.id for a in arb.spoken] == ["a1"]
+    assert "a2" not in arb.sent_ids
+    assert [a.id for a in arb.sent] == ["a1"]
+
+
+def test_same_key_after_window_is_sent_again():
+    arb = Arbiter(dedup_window_ms=3000)
+    arb.submit(ann(PRIORITY_IMPORTANT, "same", aid="a1"), T0)
+    assert arb.submit(ann(PRIORITY_IMPORTANT, "same", aid="a2"), T0 + 4000) == "sent"
+    assert "a2" in arb.sent_ids
 
 
 def test_escalation_breaks_dedup():
-    """★ 最关键的一条。
+    """★ 最关键的一条安全规则。
 
     台阶从 INFO 升级到 DANGER，绝不能被当成「同一个台阶的重复」吞掉 ——
     被吞掉的恰恰是最危险的那一条。
+
+    靠的是 dedup_key 里含 risk 和距离档位（见 contracts.make_dedup_key）。
     """
     arb = Arbiter()
     info = ann(PRIORITY_NORMAL, make_dedup_key("obstacle", "step_down", "center", RISK_INFO, 3.2), aid="info")
@@ -88,68 +87,46 @@ def test_escalation_breaks_dedup():
     arb.submit(warn, T0 + 800)
     arb.submit(danger, T0 + 1600)
 
-    assert "danger" in arb.spoken_ids, "危险升级被去重吞掉了"
-    assert arb.current().id == "danger"
+    assert "danger" in arb.sent_ids, "危险升级被去重吞掉了"
 
 
-def test_same_key_after_window_is_spoken_again():
+def test_dedup_survives_a_backwards_clock():
+    """★ 时钟倒流不该把某个 key 永久锁死。
+
+    /v1/emergency/tick 会传 now_ms=9999999999999（公元 2286 年）。
+    若去重用 (now - last) 判断，这个未来时刻之后所有真实时间戳的差值都是负数、
+    恒小于窗口 —— 该 key 会被永久判为重复。
+
+    障碍物的 dedup_key 不带事件号（同一种台阶永远同一个 key），
+    一旦锁死就再也播不出来，所以必须取绝对值。
+    """
     arb = Arbiter(dedup_window_ms=3000)
-    arb.submit(ann(PRIORITY_IMPORTANT, "same", aid="a1"), T0)
-    arb.finish_current(T0 + 1000)
-    arb.submit(ann(PRIORITY_IMPORTANT, "same", aid="a2"), T0 + 4000)
-    assert "a2" in arb.spoken_ids
+    arb.submit(ann(dedup_key="obstacle:step", aid="a1"), 9_999_999_999_999)
+
+    # 回到真实量级的时间戳，同 key 必须还能发出去
+    assert arb.submit(ann(dedup_key="obstacle:step", aid="a2"), T0) == "sent"
 
 
 # --------------------------------------------------------------------------
-# 规则 1：TTL
+# 废数据
 # --------------------------------------------------------------------------
-
-
-def test_expired_in_queue_is_dropped_not_replayed():
-    """迟到 3 秒的「前方 2 米有台阶」比不播更危险"""
-    arb = Arbiter()
-    arb.submit(ann(PRIORITY_CRITICAL, "k1", ttl_ms=10000, aid="blocker"), T0)
-    arb.submit(ann(PRIORITY_NORMAL, "k2", ttl_ms=2000, aid="stale"), T0)
-
-    # 10 秒后才轮到它 —— 早就过期了
-    nxt = arb.finish_current(T0 + 10_000)
-    assert "stale" not in arb.spoken_ids
-    assert ("stale" in [a.id for a, _ in arb.dropped])
-    assert nxt is None
 
 
 def test_zero_ttl_is_dropped_immediately():
     arb = Arbiter()
     assert arb.submit(ann(ttl_ms=0, aid="dead"), T0) == "dropped:expired"
+    assert arb.sent == []
 
 
 # --------------------------------------------------------------------------
-# 规则 4：积压保护
+# 观测
 # --------------------------------------------------------------------------
 
 
-def test_queue_full_drops_lowest_priority():
-    arb = Arbiter(max_queue=3)
-    arb.submit(ann(PRIORITY_CRITICAL, "blocker", aid="blocker"), T0)
-    for i in range(3):
-        arb.submit(ann(PRIORITY_NORMAL, f"k{i}", aid=f"n{i}"), T0)
-    # 队列已满，来一条更高优先级的
-    result = arb.submit(ann(PRIORITY_IMPORTANT, "high", aid="high"), T0)
-    assert result == "queued"
-    # 有一条低优先级被挤掉
-    assert any(r == "queue_full" for _, r in arb.dropped)
-
-
-# --------------------------------------------------------------------------
-# 时序：播完接上
-# --------------------------------------------------------------------------
-
-
-def test_finish_current_pops_next_by_priority():
-    arb = Arbiter()
-    arb.submit(ann(PRIORITY_CRITICAL, "k0", aid="blocker"), T0)
-    arb.submit(ann(PRIORITY_NORMAL, "k1", aid="low"), T0)
-    arb.submit(ann(PRIORITY_IMPORTANT, "k2", aid="high"), T0)
-
-    nxt = arb.finish_current(T0 + 2000)
-    assert nxt.id == "high", "应先播优先级更高的"
+def test_drop_reason_lookup():
+    arb = Arbiter(dedup_window_ms=3000)
+    arb.submit(ann(dedup_key="k", aid="a1"), T0)
+    dup = ann(dedup_key="k", aid="a2")
+    arb.submit(dup, T0 + 100)
+    assert arb.drop_reason("a2") == "duplicate"
+    assert arb.drop_reason("a1") is None

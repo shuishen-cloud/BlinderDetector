@@ -12,6 +12,9 @@ venv/
 data/frames/*.png
 data/*.mp4
 
+# 上传帧的临时落盘目录（见 main.py 的 POST /v1/frame）
+data/uploads/
+
 # 编辑器
 .vscode/
 .idea/

@@ -22,6 +22,11 @@ python-dotenv>=1.0
 #   websockets 是 cpXXX-manylinux 的 C 扩展 wheel，Termux 上要编译。
 wsproto>=1.2
 
+# ★ multipart 解析，POST /v1/frame 收摄像头/视频帧要用，不要删。
+#   Starlette 的 request.form() 缺它会直接抛 assert。同样地，
+#   TestClient 走进程内也测不出「装没装」这件事。
+python-multipart>=0.0.18
+
 # 测试
 pytest>=8.0
 pytest-timeout>=2.3   # 防止 WebSocket 用例等不到消息时永久挂死
