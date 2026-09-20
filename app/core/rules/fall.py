@@ -264,10 +264,12 @@ class FallMachine:
         for i, target in enumerate(ESCALATION_CHAIN):
             act.notified.append(target)
             scope = "family" if target == "family" else "grid_worker"
+            # ★ 同 sos.py：没有真实发送通道之前，只敢说「正在通知」。
+            #   见 问题-待处理的一些遗留问题.md §1.5。
             text = (
-                "已通知您的家人，请保持冷静，不要移动。"
+                "正在通知您的家人，请保持冷静，不要移动。"
                 if target == "family"
-                else "家人暂未应答，已同步通知社区网格员。"
+                else "家人暂未应答，正在同步通知社区网格员。"
             )
             out.append(
                 Announcement(

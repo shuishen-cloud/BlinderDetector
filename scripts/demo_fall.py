@@ -37,7 +37,8 @@ def show(anns, indent="  ") -> None:
         state = a.detail.get("state", "?")
         print(f"{indent}\033[32m▶\033[0m [{state}] {a.text}")
         if "notified" in a.detail:
-            print(f"{indent}    已通知: {'、'.join(a.detail['notified'])}")
+            # 「已尝试通知」而不是「已通知」—— 通知链的目标名单，不是投递结果
+            print(f"{indent}    已尝试通知: {'、'.join(a.detail['notified'])}")
 
 
 def fall_signal(**kw) -> FallSignal:

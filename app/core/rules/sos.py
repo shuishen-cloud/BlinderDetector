@@ -37,10 +37,14 @@ ESCALATION_CHAIN = ("family", "grid_worker")
 #: 一级通知后多久没人应答就升级（毫秒）
 DEFAULT_ACK_TIMEOUT_MS = 30_000
 
-#: 各级的中文名
+#: 各级的中文名。
+#: ★ 一律说「正在…」，不说「已通知」—— 项目里还没有任何真实发送通道
+#:   （无 SMTP、无 webhook）。在用户最危险的时刻断言一件没发生的事，
+#:   他会因此停止自救、原地等一个不会来的人。等真接了通道，再按投递
+#:   结果改回「已通知」。见 问题-待处理的一些遗留问题.md §1.5。
 _TARGET_TEXT = {
-    "family": "已通知您的家人",
-    "grid_worker": "已同步通知社区网格员",
+    "family": "正在通知您的家人",
+    "grid_worker": "正在同步通知社区网格员",
 }
 
 _TARGET_SCOPE = {
@@ -160,7 +164,7 @@ class SosMachine:
 
     def _notify(self, sos: _Sos, target: str, *, step: int) -> Announcement:
         sos.notified.append(target)
-        text = _TARGET_TEXT.get(target, "已发出求助")
+        text = _TARGET_TEXT.get(target, "正在发出求助")
 
         return Announcement(
             text=text,
