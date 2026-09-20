@@ -14,6 +14,12 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+# ★ Windows 控制台默认 GBK，下面的 ▶ 会直接撑爆 UnicodeEncodeError。
+#   在 import app 之前切到 UTF-8（别的平台本来就是 UTF-8，无副作用）。
+for _s in (sys.stdout, sys.stderr):
+    if hasattr(_s, "reconfigure"):
+        _s.reconfigure(encoding="utf-8", errors="replace")
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.core.rules.fall import FallMachine, FallSignal  # noqa: E402
@@ -72,7 +78,10 @@ def main() -> int:
 
     print(f"\n  t=15s  窗口归零，但用户已显式取消")
     late = m2.tick(T0 + 15_001)
-    print(f"         外呼: {'有（错！）' if late else '\033[32m无 —— 正确\033[0m'}")
+    # ★ 颜色码必须先落到变量里：Python 3.11 及更早禁止 f-string 的 {}
+    #   里出现反斜杠（3.12 的 PEP 701 才放开），内联会让整个脚本 SyntaxError。
+    verdict = "有（错！）" if late else "\033[32m无 —— 正确\033[0m"
+    print(f"         外呼: {verdict}")
 
     # ------------------------------------------------------------------
     banner("对照：步行节律（最常见假阳性）")
@@ -80,7 +89,8 @@ def main() -> int:
     m3 = FallMachine()
     anns = m3.on_signal(fall_signal(movement_class="walking"), "evt_C", T0)
     print(f"  手机在手里被甩了一下，但步态显示人在正常走路")
-    print(f"  播报: {anns if anns else '\033[32m无 —— 直接判为误报，连问都不问\033[0m'}")
+    quiet = "\033[32m无 —— 直接判为误报，连问都不问\033[0m"
+    print(f"  播报: {anns if anns else quiet}")
     print(f"  状态: {m3.state_of('evt_C')}")
 
     print("\n\033[32m演示结束\033[0m")

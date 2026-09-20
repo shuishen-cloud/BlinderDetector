@@ -17,6 +17,11 @@ import socket
 import struct
 import sys
 
+# ★ Windows 控制台默认 GBK，下面的 ▶ 会直接撑爆 UnicodeEncodeError。
+for _s in (sys.stdout, sys.stderr):
+    if hasattr(_s, "reconfigure"):
+        _s.reconfigure(encoding="utf-8", errors="replace")
+
 TIMEOUT = 10
 
 

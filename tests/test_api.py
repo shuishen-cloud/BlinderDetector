@@ -331,6 +331,6 @@ def test_data_mount_serves_test_assets(client):
     from app.main import DATA_DIR
 
     if not (DATA_DIR / "demo.mp4").is_file():
-        pytest.skip("还没生成测试素材：bash scripts/make_test_video.sh")
+        pytest.skip("还没生成测试素材：python scripts/make_test_video.py")
     assert client.get("/data/demo.mp4").status_code == 200
 
