@@ -310,7 +310,7 @@ idle ──冲击+姿态异常──> suspected ──倒计时归零──> con
 | 通用 | `index` | 帧序号，测试素材按它轮换场景 |
 | 感知 | — | 只用 `image_ref` |
 | 导航 | `destination` | 目的地（自然语言） |
-| 导航 | `geo` | `('lat', 'lng')` 起点坐标 |
+| 导航 | `geo` | `{"lat": 39.9, "lng": 116.4}` 起点坐标（JSON 对象） |
 | 导航 | `avoid` | 要避开的障碍，默认 `["overpass","underpass","stairs"]` |
 | 求助 | `kind` | `fall_signal` \| `sos` \| `cancel` |
 | 求助 | `signal` | 跌倒传感器窗口，见下 |
