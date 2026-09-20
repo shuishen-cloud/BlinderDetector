@@ -219,13 +219,6 @@ def _risk_rank(risk: str | None) -> int:
     return {RISK_DANGER: 2, RISK_WARNING: 1}.get(risk or "", 0)
 
 
-def scene_prefix(scene_conf: float) -> str:
-    """场景描述的整体置信度前缀。"""
-    if scene_conf >= HEDGE_CONFIDENCE:
-        return ""
-    return "可能"
-
-
 def haptic_for(risk: str) -> str:
     return HAPTIC_FOR_RISK.get(risk, HAPTIC_NONE)
 

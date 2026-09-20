@@ -48,21 +48,25 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
-单文件、零构建、零 npm（`web/index.html`）。它**不是交付形态**，只用来把
-「帧 → 后端 → 播报 → WS 推流」这条链路跑通并肉眼验证契约。
+零构建、零 npm：三个静态文件（`web/index.html` 结构 + `app.css` 样式 +
+`app.js` 逻辑），由后端直接托管在 `/` 和 `/static/*`。它**不是交付形态**，
+只用来把「帧 → 后端 → 播报 → WS 推流」这条链路跑通并肉眼验证契约。
 
 - **帧源 ①视频抽帧** —— 读 `data/demo.mp4`，感知/安全两条流水线**各自独立
   发包**（频率可调），这就是 design.md D2 的两条解耦流水线。
-  视频 404 就先跑 `bash scripts/make_test_video.sh`。
+  视频 404 就先跑 `python scripts/make_test_video.py`。
 - **帧源 ②摄像头** —— 只留接口占位。接入时换成 `getUserMedia` 取流，
   复用同一个 `sendFrame()`，后端不用改。
 - **帧源 ③单张图片** —— 拖拽即可，不依赖 demo.mp4。
 
 ![前端调试台](data/main_gui.png)
 
-> 上图是实测截图：左边三个帧源与其余路由按钮；右上「播报流」是 WS 推来的播报，
-> 每条都标着 `source` / `priority` / `ttl` / `haptic`；右下是**请求日志与闸门结果**
-> —— 那一串 `丢弃 duplicate` 是闸门在按去重规则拦重复，属正常。
+> 上图是实测截图。顶栏两枚状态药丸分别是 WS 连接状态和 `/v1/health` 报上来的
+> 实现（`VLM=mock DET=mock`）；统计条数本次会话的收到 / 紧急 / 已过期 / 闸门丢弃 /
+> 发帧；右侧上半「播报流」是 WS 推来的播报，每条都标着 `source` / `priority` /
+> `ttl` / `haptic`，并带一条 TTL 倒计时条，顶部可按优先级筛选、可暂停；
+> 右下是**请求日志与闸门结果** —— 那一串「丢弃 N 条（重复/过期）」是闸门在按
+> 去重规则拦重复，属正常。
 
 端侧发图走**统一入口 `POST /v1/frame`**（multipart），字段见
 [docs/api-contract.md](docs/api-contract.md) §4.0。
@@ -74,7 +78,7 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 先生成测试视频（手写 SVG → PNG → mp4）：
 
 ```bash
-bash scripts/make_test_video.sh      # 首次会自动装 librsvg / ffmpeg
+python scripts/make_test_video.py    # 需要 ffmpeg；SVG 渲染自动挑 rsvg-convert 或 Chrome
 ```
 
 然后喂给后端看产生了哪些播报：
@@ -129,7 +133,13 @@ Announcement  所有接口的输出
 app/
   contracts.py          ★ 接口契约单一真源（只有标准库依赖）
   config.py             读 .env
-  main.py               Starlette 装配
+  main.py               Starlette 装配（只装配，实现都在下面几处）
+  paths.py              BASE_DIR / WEB_DIR / DATA_DIR / UPLOAD_DIR
+  api/                  HTTP 与 WS 层
+    envelope.py         统一信封：入 Frame，出 Announcement
+    hub.py              WS 播报通道（/v1/stream）
+    uploads.py          ★ 统一帧入口 POST /v1/frame（multipart）
+    routes.py           路由表 + tick / health / 调试台
   core/
     registry.py         实现注册表
     arbiter.py          ★ 播报闸门（只做去重 + 废数据过滤）
@@ -145,7 +155,10 @@ app/
     detectors/          障碍物检测器实现
     sources/            输入源（video / images）
   mock/fixtures.py      契约样例数据
-web/index.html          ★ 前端调试台（单文件，零构建）
+web/
+  index.html            ★ 前端调试台结构（零构建，无打包步骤）
+  app.css               样式（深色主题的全部取值）
+  app.js                调试台逻辑（帧源 / WS / 渲染）
 assets/                 测试素材（手写 SVG）
 data/                   生成的帧和视频；uploads/ 是上传帧的临时落盘处
 scripts/                自检、跑视频、跌倒演示、WS 探针、契约导出

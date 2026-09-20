@@ -4,9 +4,7 @@
     python scripts/make_test_video.py
     python scripts/make_test_video.py out.mp4 --hold 3
 
-和 `make_test_video.sh` 做的是同一件事，但**不依赖 Unix 工具链**：
-.sh 里自动装依赖那几行写的是 `pkg install`，只有 Termux 认得，
-Windows 上直接跑会失败。本脚本按可用性自动挑工具：
+**不依赖 Unix 工具链**，Termux 和 Windows 上都能跑 —— 按可用性自动挑工具：
 
     SVG -> PNG   rsvg-convert（Termux / Linux）或 Chrome/Edge headless（桌面）
     PNG -> MP4   系统 ffmpeg，或 imageio-ffmpeg 自带的静态二进制
@@ -104,7 +102,7 @@ def render_png(svg: Path, out: Path) -> str:
 
 
 def encode(pngs: list[Path], out: Path, hold: float) -> None:
-    """PNG 序列 -> MP4。参数和 make_test_video.sh 保持一致。"""
+    """PNG 序列 -> MP4。"""
     exe = ffmpeg_exe()
     if exe is None:
         raise RuntimeError("需要 ffmpeg：装系统 ffmpeg，或 pip install imageio-ffmpeg")
