@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+
+# 环境配置（含密钥，绝不提交）
+.env
+
+# 生成的测试素材
+data/frames/*.png
+data/*.mp4
+
+# 编辑器
+.vscode/
+.idea/
+*.swp
+.DS_Store

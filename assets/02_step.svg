@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- 场景：前方人行道有向下的台阶。对应第二层的「前方约 2 米有向下的台阶，注意抬脚」 -->
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="480" viewBox="0 0 640 480">
+  <!-- 天空 -->
+  <rect x="0" y="0" width="640" height="210" fill="#cfe0ee"/>
+  <!-- 远处树 -->
+  <rect x="60" y="130" width="14" height="80" fill="#6b5334"/>
+  <circle cx="67" cy="120" r="44" fill="#4c7a3f"/>
+  <rect x="560" y="140" width="14" height="70" fill="#6b5334"/>
+  <circle cx="567" cy="130" r="38" fill="#4c7a3f"/>
+  <!-- 上层地面 -->
+  <rect x="0" y="210" width="640" height="90" fill="#a9adb2"/>
+  <!-- 台阶：三级下行 -->
+  <rect x="0" y="300" width="640" height="34" fill="#8d9198"/>
+  <rect x="0" y="334" width="640" height="34" fill="#7c8087"/>
+  <rect x="0" y="368" width="640" height="34" fill="#6b6f76"/>
+  <!-- 台阶边缘高亮 -->
+  <rect x="0" y="298" width="640" height="4" fill="#e6e6e6"/>
+  <rect x="0" y="332" width="640" height="4" fill="#dcdcdc"/>
+  <rect x="0" y="366" width="640" height="4" fill="#d2d2d2"/>
+  <!-- 下层地面 -->
+  <rect x="0" y="402" width="640" height="78" fill="#5c6067"/>
+</svg>

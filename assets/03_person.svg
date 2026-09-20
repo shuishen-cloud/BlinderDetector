@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- 场景：左侧有人。对应第一层的 objects 里 {"label":"人","position":"left"} -->
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="480" viewBox="0 0 640 480">
+  <!-- 天空 -->
+  <rect x="0" y="0" width="640" height="290" fill="#c6d9e8"/>
+  <!-- 远处楼房 -->
+  <rect x="300" y="110" width="120" height="180" fill="#93a0ae"/>
+  <rect x="440" y="150" width="90" height="140" fill="#a3aeb9"/>
+  <!-- 路面 -->
+  <rect x="0" y="290" width="640" height="190" fill="#5f6267"/>
+  <!-- 左侧行人 -->
+  <circle cx="70" cy="215" r="26" fill="#e8b98a"/>
+  <rect x="46" y="243" width="48" height="96" rx="12" fill="#3f6ea8"/>
+  <rect x="52" y="339" width="16" height="70" fill="#2f3a45"/>
+  <rect x="74" y="339" width="16" height="70" fill="#2f3a45"/>
+  <!-- 右侧远处自行车 -->
+  <circle cx="520" cy="400" r="26" fill="none" stroke="#2b2e33" stroke-width="6"/>
+  <circle cx="596" cy="400" r="26" fill="none" stroke="#2b2e33" stroke-width="6"/>
+  <path d="M520 400 L556 356 L596 400 M556 356 L540 400" stroke="#2b2e33"
+        stroke-width="5" fill="none"/>
+</svg>

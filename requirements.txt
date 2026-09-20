@@ -1,0 +1,19 @@
+# 灵眸伴途 —— 后端依赖
+#
+# ★ 本文件所有包均为纯 Python wheel，Termux (android_arm64_v8a / bionic libc)
+#   上零编译安装。
+#
+# ★ 严禁引入：fastapi / pydantic —— 它们依赖 pydantic-core (Rust)，
+#   PyPI 只提供 manylinux (glibc) wheel，与 Termux 的 bionic libc 不兼容，
+#   会强制源码编译 Rust。契约层用标准库 dataclass 替代。
+#
+# ★ uvicorn 不要带 [standard] extra —— 会拉 httptools / uvloop 等 C 扩展。
+
+starlette>=0.40
+uvicorn>=0.30
+httpx>=0.27
+python-dotenv>=1.0
+
+# 测试
+pytest>=8.0
+pytest-timeout>=2.3   # 防止 WebSocket 用例等不到消息时永久挂死
