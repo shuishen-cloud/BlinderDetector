@@ -17,6 +17,11 @@ import socket
 import struct
 import sys
 
+# ★ Windows 控制台默认 GBK，下面的 ▶ 会直接撑爆 UnicodeEncodeError。
+for _s in (sys.stdout, sys.stderr):
+    if hasattr(_s, "reconfigure"):
+        _s.reconfigure(encoding="utf-8", errors="replace")
+
 TIMEOUT = 10
 
 
@@ -87,7 +92,14 @@ def main() -> int:
     print(f"已连接 ws://{host}:{port}/v1/stream （Ctrl-C 退出）\n")
     try:
         while True:
-            raw = read_text_frame(sock)
+            try:
+                raw = read_text_frame(sock)
+            except TimeoutError:
+                # ★ socket 上是 10 秒超时，但「这段时间没人发帧」是常态而非错误。
+                #   这里继续等，而不是让探针以一段堆栈收场 —— 它的用途就是
+                #   挂着等播报（配合另一个终端里的 curl），直到 Ctrl-C。
+                print("  · 10 秒无播报，继续等待…（Ctrl-C 退出）")
+                continue
             if raw is None:
                 continue
             msg = json.loads(raw)

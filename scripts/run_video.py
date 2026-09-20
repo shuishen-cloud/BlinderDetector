@@ -14,6 +14,12 @@ import asyncio
 import sys
 from pathlib import Path
 
+# ★ Windows 控制台默认 GBK，下面的 ▶ / ✕ 会直接撑爆 UnicodeEncodeError。
+#   在 import app 之前切到 UTF-8（别的平台本来就是 UTF-8，无副作用）。
+for _s in (sys.stdout, sys.stderr):
+    if hasattr(_s, "reconfigure"):
+        _s.reconfigure(encoding="utf-8", errors="replace")
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.core import registry  # noqa: E402
@@ -51,7 +57,8 @@ async def main() -> int:
         src = registry.get("framesource", kind, **kwargs)
     except (FileNotFoundError, RuntimeError) as e:
         print(f"无法打开输入源: {e}", file=sys.stderr)
-        print("先生成测试素材: bash scripts/make_test_video.sh", file=sys.stderr)
+        print("先生成测试素材: python scripts/make_test_video.py", file=sys.stderr)
+        print("（Termux 上也可用 bash scripts/make_test_video.sh）", file=sys.stderr)
         return 1
 
     layer_names = [s.strip() for s in args.layers.split(",") if s.strip()]

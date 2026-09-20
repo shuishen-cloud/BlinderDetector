@@ -195,3 +195,19 @@ def test_cancel_does_not_need_network():
     m = FallMachine()
     m.on_signal(real_fall(), "e1", T0)
     assert m.cancel("e1", T0 + 1_000) is not None
+
+
+def test_wording_never_claims_delivery_happened():
+    """★ 项目里还没有任何真实发送通道（无 SMTP、无 webhook）。
+
+    在用户最危险的时刻断言「已通知」，他会停止自救、原地等一个不会来的
+    人 —— 这不是没做完，是不诚实。文案说到「正在通知」为止。
+    见 问题-待处理的一些遗留问题.md §1.5。
+    """
+    m = FallMachine(confirm_ms=1_000)
+    m.on_signal(real_fall(), "e1", T0)
+    anns = m.tick(T0 + 1_001)
+
+    joined = " ".join(a.text for a in anns)
+    assert "已通知" not in joined, "还没有通道，不能说「已通知」"
+    assert "正在通知" in joined

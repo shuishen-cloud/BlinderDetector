@@ -117,3 +117,23 @@ def test_notification_keys_are_distinct():
     second = m.tick(T0 + 30_001)
     keys = {a.dedup_key for a in first + second}
     assert len(keys) == len(first) + len(second)
+
+
+# --------------------------------------------------------------------------
+# 诚实性
+# --------------------------------------------------------------------------
+
+
+def test_wording_never_claims_delivery_happened():
+    """★ 项目里还没有任何真实发送通道（无 SMTP、无 webhook）。
+
+    同 test_fall：在用户最危险的时刻断言「已通知」，他会停止自救、
+    原地等一个不会来的人。文案说到「正在通知」为止。
+    见 问题-待处理的一些遗留问题.md §1.5。
+    """
+    m, first = arm()
+    anns = first + m.tick(T0 + 30_001)
+
+    joined = " ".join(a.text for a in anns)
+    assert "已通知" not in joined, "还没有通道，不能说「已通知」"
+    assert "正在通知" in joined
