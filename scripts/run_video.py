@@ -45,8 +45,10 @@ async def main() -> int:
     registry.load_all()
 
     kind = guess_source(args.path, args.source)
+    # fps 只有视频源认 —— 图片序列按文件名顺序走，没有抽帧这回事
+    kwargs = {"path": args.path, "fps": args.fps} if kind == "video" else {"path": args.path}
     try:
-        src = registry.get("framesource", kind, path=args.path, fps=args.fps)
+        src = registry.get("framesource", kind, **kwargs)
     except (FileNotFoundError, RuntimeError) as e:
         print(f"无法打开输入源: {e}", file=sys.stderr)
         print("先生成测试素材: bash scripts/make_test_video.sh", file=sys.stderr)
