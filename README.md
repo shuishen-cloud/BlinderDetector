@@ -4,9 +4,17 @@
 
 手机摄像头看世界，AI 用自然语言说给视障人士听。
 
-> **当前阶段：接口契约冻结，各层并行开发。**
-> 本期只有契约和骨架，四层全是 mock 实现，不接真实模型。
-> 任务分工与进度见 [工作管理.md](工作管理.md)，接口字段见 [docs/api-contract.md](docs/api-contract.md)。
+> **当前阶段：四层逻辑已实现，外部依赖仍是 mock，各组并行开工。**
+>
+> 已写实：风险分级、措辞生成、跌倒状态机、求助状态机、无障碍路线过滤。
+> 未接入：云端 VLM、检测模型、地图 API、短信/推送通道。
+>
+> | 想知道 | 去哪看 |
+> | :--- | :--- |
+> | 怎么跑起来 | 本文档下方 |
+> | 接口字段 | [docs/api-contract.md](docs/api-contract.md) |
+> | **为什么这么设计** | [docs/design.md](docs/design.md) |
+> | 谁做什么、进度 | [工作管理.md](工作管理.md) |
 
 ---
 
@@ -62,11 +70,11 @@ Frame         所有接口的输入
 Announcement  所有接口的输出
 ```
 
-七条路由全部「入 `Frame`，出 `Announcement`」，四层的差异只体现在
+九条路由全部「入 `Frame`，出 `Announcement`」，四层的差异只体现在
 `source` 字段和 `detail` 的形状上。端侧拿到播报**只播 `text`** 加执行
 `haptic` 震动，不需要理解任何业务结构。
 
-几条关键规则（详见 [docs/api-contract.md](docs/api-contract.md)）：
+几条关键规则（完整推导见 [docs/design.md](docs/design.md)）：
 
 - **感知与安全是两条解耦的流水线。** 云端 VLM 单次调用 1–3 秒，对避障来说
   完全不可接受，所以第二层绝不能走 VLM。这是本项目最重要的架构主张。
@@ -115,7 +123,9 @@ docs/api-contract.md    自动生成的接口契约
 
 ## 加一种实现
 
-**不要改别人的代码。** 新建文件加个装饰器，靠 `.env` 切换：
+**不要改别人的代码。** 新建文件加个装饰器，靠 `.env` 切换。
+
+### 换云端 VLM（第一层）
 
 ```python
 # app/core/providers/zhipu_vlm.py
@@ -125,18 +135,42 @@ from app.contracts import Frame
 @register("vlm", "zhipu")
 class ZhipuVLM:
     async def describe_frame(self, frame: Frame, image: bytes) -> dict:
-        ...   # 返回 detail 里 vision 的形状
+        ...   # 返回 contracts.vision_detail() 的形状
 
     async def health(self) -> bool:
         return True
 ```
 
 ```bash
-# .env
 VLM_PROVIDER=zhipu
 ```
 
-可注册的类别：`vlm` / `layer` / `framesource`。
+`openai_compat.py` 里已经有 DashScope / 智谱 / OpenAI 三个实现，都走
+OpenAI 兼容协议，填上 `VLM_BASE_URL` / `VLM_API_KEY` / `VLM_MODEL` 即可。
+
+### 换障碍物检测模型（第二层）
+
+```python
+# app/core/detectors/yolo.py
+@register("detector", "yolo")
+class YoloDetector:
+    async def detect(self, frame: Frame) -> list[dict]:
+        ...   # 返回原始检测结果，不做分级和措辞
+    async def health(self) -> bool:
+        return True
+```
+
+```bash
+DETECTOR=yolo
+```
+
+**检测器只回答「看到什么」** —— 置信度过滤、风险分级、措辞全在
+`app/core/rules/` 里，所有检测器共用同一套安全策略。所以换模型不会
+让安全规则跟着变。
+
+### 其他
+
+可注册的类别：`vlm` / `detector` / `layer` / `framesource`。
 `GET /v1/health` 会列出所有已注册的实现。
 
 ---

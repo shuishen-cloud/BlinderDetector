@@ -53,11 +53,13 @@ DOC = f"""# 灵眸伴途 —— 接口契约
 
 > ⚠️ 本文件由 `python scripts/export_contract.py` 自动生成，**不要手改**。
 > 改契约请改 `app/contracts.py`，然后重跑生成脚本。
+>
+> 本文档讲**是什么**；**为什么这么设计**见 [design.md](design.md)。
 
 ## 0. 一句话
 
 全系统只有两个数据结构：**`Frame`（输入）** 和 **`Announcement`（输出）**。
-七条路由全部「入 Frame，出 Announcement」，四层的差异只体现在 `source`
+九条路由全部「入 Frame，出 Announcement」，四层的差异只体现在 `source`
 字段和 `detail` 的形状上。
 
 > 契约版本 1.0　｜　兼容性原则：只加可选字段，不改字段名和类型，不删字段。
