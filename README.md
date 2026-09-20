@@ -15,6 +15,7 @@
 > | 接口字段 | [docs/api-contract.md](docs/api-contract.md) |
 > | **为什么这么设计** | [docs/design.md](docs/design.md) |
 > | 谁做什么、进度 | [工作管理.md](工作管理.md) |
+> | 设计中的已知问题 | [文档-设计中的问题.md](文档-设计中的问题.md) |
 
 ---
 
@@ -93,9 +94,10 @@ Frame         所有接口的输入
 Announcement  所有接口的输出
 ```
 
-九条路由全部「入 `Frame`，出 `Announcement`」，四层的差异只体现在
+十条路由全部「入 `Frame`，出 `Announcement`」（九条 JSON + 一个 multipart 统一帧入口），四层的差异只体现在
 `source` 字段和 `detail` 的形状上。端侧拿到播报**只播 `text`** 加执行
-`haptic` 震动，不需要理解任何业务结构。
+`haptic` 震动，不需要理解 `detail` 的结构 —— 但**要读 `priority` /
+`interrupt` / `ttl_ms` 做播放排序和到期判断**（详见 design.md D11）。
 
 几条关键规则（完整推导见 [docs/design.md](docs/design.md)）：
 
@@ -225,7 +227,8 @@ pytest -v
 
 ## 环境说明
 
-当前开发环境是 Termux / Android（Python 3.14）。
+当前开发环境是 **WSL / Linux（Python 3.13）**；早期开发在 Termux / Android
+（Python 3.14）上做，手机端仍是目标运行环境之一 —— 下面的零编译约束来自它。
 
 **为什么不用 FastAPI：** Termux 平台标签是 `android_24_arm64_v8a`（bionic libc），
 而 `pydantic-core` 在 PyPI 上只有 `manylinux_2_17_aarch64`（glibc），不兼容，

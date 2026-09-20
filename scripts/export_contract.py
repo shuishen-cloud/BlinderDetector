@@ -59,7 +59,8 @@ DOC = f"""# 灵眸伴途 —— 接口契约
 ## 0. 一句话
 
 全系统只有两个数据结构：**`Frame`（输入）** 和 **`Announcement`（输出）**。
-九条路由全部「入 Frame，出 Announcement」，四层的差异只体现在 `source`
+十条路由全部「入 Frame，出 Announcement」（九条 JSON + 一个 multipart 统一
+帧入口），四层的差异只体现在 `source`
 字段和 `detail` 的形状上。
 
 > 契约版本 1.0　｜　兼容性原则：只加可选字段，不改字段名和类型，不删字段。
@@ -76,8 +77,10 @@ DOC = f"""# 灵眸伴途 —— 接口契约
 
 {field_table(C.Announcement)}
 
-**端侧只消费 `text` 字段** + 执行 `haptic` 震动，不需要理解 `detail`。
-业务逻辑、措辞、优先级全部集中在后端。
+**端侧的播报内容只看 `text`**，执行 `haptic` 震动，不需要理解 `detail` 的结构。
+但**还要读 `priority` / `interrupt` / `ttl_ms` 三个字段做播放排序与到期判断**
+（详见 §5）—— 排序、打断、积压、到期不补播都由端侧负责。
+业务逻辑、措辞、优先级判定都在后端。
 
 ### 2.1 `source` 取值
 
