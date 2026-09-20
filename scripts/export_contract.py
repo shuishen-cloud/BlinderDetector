@@ -54,14 +54,13 @@ DOC = f"""# 灵眸伴途 —— 接口契约
 > ⚠️ 本文件由 `python scripts/export_contract.py` 自动生成，**不要手改**。
 > 改契约请改 `app/contracts.py`，然后重跑生成脚本。
 >
-> 本文档讲**是什么**；**为什么这么设计**见 [design.md](design.md)。
+> 本文档讲**是什么**；**为什么这么设计**见 [../设计说明.md](../设计说明.md)。
 
 ## 0. 一句话
 
 全系统只有两个数据结构：**`Frame`（输入）** 和 **`Announcement`（输出）**。
-十条路由全部「入 Frame，出 Announcement」（九条 JSON + 一个 multipart 统一
-帧入口），四层的差异只体现在 `source`
-字段和 `detail` 的形状上。
+九条路由全部「入 Frame，出 Announcement」，四层的差异只体现在
+`source` 字段和 `detail` 的形状上。
 
 > 契约版本 1.0　｜　兼容性原则：只加可选字段，不改字段名和类型，不删字段。
 
@@ -174,36 +173,28 @@ DOC = f"""# 灵眸伴途 —— 接口契约
 | `POST` | `/v1/emergency/sos` | `Frame` | `Announcement` | 第四层 一键求助 |
 | `POST` | `/v1/emergency/cancel` | `Frame` | `Announcement` | 取消求助 / 取消跌倒确认 |
 | `POST` | `/v1/emergency/tick` | `{"now_ms"}` | `Announcement[]` | 推进紧急状态机时钟 |
-| `POST` | `/v1/frame` | multipart | `Announcement` | ★ 统一帧入口（上传图像） |
 | `GET` | `/v1/health` | — | 降级状态 | |
 | `WS` | `/v1/stream` | — | 推 `Announcement` | |
 
 **路由可能返回空的 `announcements` 数组**（比如前方无障碍），这不代表出错。
 「没出声」和「系统哑了」的区分靠 `/v1/health` 和降级通告。
 
-### 4.0 统一帧入口 `POST /v1/frame`
+### 4.0 怎么发一帧
 
-端侧（摄像头 / 视频抽帧 / 图片文件）只需要这一个「发图」接口。信封与其余
-路由完全一致，区别只是**图像走 multipart 上传**，而不是让 `image_ref` 指一个
-服务端已有的路径。
+九条路由都收 JSON，图像靠 `Frame.image_ref` 指一个**服务端已有的路径**：
 
-`multipart/form-data` 字段：
+```bash
+curl -X POST http://127.0.0.1:8000/v1/perception/describe \\
+  -H 'Content-Type: application/json' \\
+  -d '{{"frame_id":"f1","image_ref":"/tmp/a.jpg","extra":{{"index":2}}}}'
+```
 
-| 字段 | 必填 | 说明 |
-| :--- | :--- | :--- |
-| `image` | ★ 是 | 图像文件本体 |
-| `source` | 否 | `perception`（默认）\\| `safety` — 只有这两层吃图像 |
-| `frame_id` | 否 | 不填则服务端生成 |
-| `ts` | 否 | 毫秒时间戳，不填则取当前时间 |
-| `extra` | 否 | JSON 对象字符串，如 `{{"index":1}}` |
+`image_ref` 的语义是「服务端路径」，`layers/perception.py` 用
+`os.path.isfile()` 找它。端侧真实接入（摄像头 / 视频抽帧）时如果图像不在
+服务端，需要先把字节落到服务端，或者补一个 multipart 上传入口。
 
-入参不合法返回 **400** 且响应体为 `{{"error": "..."}}`（缺 `image`、`source`
-不在允许集合、`extra` 不是 JSON 对象、`ts` 非整数、空文件）。
-
-> **为什么上传的字节要落盘成临时文件？** 因为 `image_ref` 的语义是
-> 「服务端路径」，`layers/perception.py` 用 `os.path.isfile()` 找它。
-> 落盘一次可以让下游（含未来的真实检测器）一行都不用改。
-> 文件在响应返回前删除。
+> **本分支去掉了完整版的 `POST /v1/frame`（multipart 统一帧入口）。**
+> 需要它时见 [../设计说明.md](../设计说明.md) §三。
 
 ### 4.1 `Frame.extra` 的约定字段
 
@@ -295,7 +286,7 @@ DOC = f"""# 灵眸伴途 —— 接口契约
 pip install -r requirements.txt
 cp .env.example .env
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
-bash scripts/smoke.sh
+bash smoke.sh
 ```
 
 前端连 `ws://<host>:8000/v1/stream` 收播报，收到就播 `text` + 执行 `haptic`。
