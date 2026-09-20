@@ -205,3 +205,7 @@ pytest -v
 纯 Python wheel，零编译。
 
 **装 uvicorn 时不要带 `[standard]`** —— 会拉 httptools / uvloop 等 C 扩展。
+
+**但 WebSocket 库必须单独装**（已写进 `requirements.txt` 的 `wsproto`）。
+不带 `[standard]` 的 uvicorn 没有任何 WS 实现，`/v1/stream` 会直接 404。
+`wsproto` 是纯 Python，满足上面的零编译约束；`websockets` 是 C 扩展 wheel，不行。
