@@ -8,6 +8,11 @@
 > multipart 上传入口和多余文档，只留核心链路，方便读和跑。
 > 完整版见 [设计说明.md](设计说明.md) 末尾「与完整版的差异」。
 
+| 想知道 | 去哪看 |
+| :--- | :--- |
+| 接口字段 | [docs/api-contract.md](docs/api-contract.md) |
+| 为什么这么设计 | [设计说明.md](设计说明.md) |
+
 ---
 
 ## 快速开始
@@ -29,6 +34,12 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 
 ```bash
 pytest -q                            # 138 项，约 0.2 秒
+```
+
+改了 `app/contracts.py` 后重新生成接口契约文档：
+
+```bash
+python scripts/export_contract.py    # -> docs/api-contract.md
 ```
 
 ---
@@ -75,7 +86,11 @@ app/
     layers/             四层编排
     sources/            输入源（video / images）
   mock/fixtures.py      契约样例数据
+docs/api-contract.md    ★ 接口契约（生成物，勿手改）
+scripts/
+  export_contract.py    契约文档生成脚本（纯标准库，无外部依赖）
 tests/                  pytest（138 项）
+smoke.sh                一键自检
 ```
 
 **三层分工：** `detectors/` 只回答「看到什么」，`rules/` 回答「怎么判断危险、
