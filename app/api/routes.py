@@ -78,7 +78,13 @@ async def health(request) -> JSONResponse:
     所以这里不只报 ok/false，还把**哪个实现不可用**一起吐出来。
     """
     degraded: list[dict] = []
-    for kind, name in (("vlm", config.VLM_PROVIDER), ("detector", config.DETECTOR)):
+    for kind, name in (
+        ("vlm", config.VLM_PROVIDER),
+        ("detector", config.DETECTOR),
+        # ★ router 也要报：ROUTER=baidu 而 AK 没配时，用户听到的其实是
+        #   内置演示路网 —— 不说出来的话，「没出声」和「系统哑了」就分不开了。
+        ("router", config.ROUTER),
+    ):
         try:
             if not await registry.get(kind, name).health():
                 degraded.append({"reason": f"{kind}_unavailable", "impl": name})
@@ -89,11 +95,12 @@ async def health(request) -> JSONResponse:
         "ok": not degraded,
         "degraded": degraded,
         "impls": {k: registry.names(k) for k in
-                  ("vlm", "detector", "layer", "framesource")},
+                  ("vlm", "detector", "layer", "framesource", "router")},
         "config": {
             "VLM_PROVIDER": config.VLM_PROVIDER,
             "DETECTOR": config.DETECTOR,
             "FRAME_SOURCE": config.FRAME_SOURCE,
+            "ROUTER": config.ROUTER,
         },
     })
 

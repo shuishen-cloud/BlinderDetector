@@ -19,6 +19,17 @@ VLM_API_KEY: str = os.getenv("VLM_API_KEY", "")
 VLM_MODEL: str = os.getenv("VLM_MODEL", "")
 VLM_TIMEOUT_MS: int = int(os.getenv("VLM_TIMEOUT_MS", "8000"))
 
+# 第三层：路线数据源（见 app/core/routers/）
+#   builtin = 内置假路网，不依赖网络；baidu = 百度地图步行路线规划
+# ★ 默认 builtin：演示与离线开发不该被网络拖垮。
+#   换成 baidu 需要 BAIDU_AK，且失败会自动降级回 builtin 并如实播报。
+ROUTER: str = os.getenv("ROUTER", "builtin")
+BAIDU_AK: str = os.getenv("BAIDU_AK", "")
+BAIDU_TIMEOUT_MS: int = int(os.getenv("BAIDU_TIMEOUT_MS", "5000"))
+#: 开发开关：配了就从这个本地 JSON 读响应代替 HTTP 请求。
+#: 没有 AK 也能把「真实响应 → 解析 → 警告 → 降级」整条链跑通。
+BAIDU_FIXTURE: str = os.getenv("BAIDU_FIXTURE", "")
+
 # 服务
 HOST: str = os.getenv("HOST", "0.0.0.0")
 PORT: int = int(os.getenv("PORT", "8000"))

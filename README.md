@@ -149,11 +149,12 @@ app/
       scene.py            场景分类（决定去重粒度）
       fall.py             跌倒状态机
       sos.py              求助状态机（幂等、升级链）
-      route.py            无障碍路线规划
+      route.py            无障碍策略（过滤 / 警告 / 措辞，不拿数据）
     layers/             四层编排（薄）
     providers/          VLM 实现（mock / dashscope / zhipu / openai）
     detectors/          障碍物检测器实现
     sources/            输入源（video / images）
+    routers/            ★ 路线数据源（builtin 内置假路网 / baidu 百度地图）
   mock/fixtures.py      契约样例数据
 web/
   index.html            ★ 前端调试台结构（零构建，无打包步骤）
@@ -219,9 +220,48 @@ DETECTOR=yolo
 `app/core/rules/` 里，所有检测器共用同一套安全策略。所以换模型不会
 让安全规则跟着变。
 
+### 换地图数据源（第三层）
+
+第三层把「路线数据从哪来」和「无障碍策略怎么定」分开了：
+`routers/` 只回答「地图说怎么走」，`rules/route.py` 回答「怎么过滤、怎么警告、
+怎么说出来」。换地图厂商时无障碍策略一行都不用动。
+
+```python
+# app/core/routers/amap.py
+@register("router", "amap")
+class AmapRouter:
+    async def plan(self, origin, destination) -> list[dict] | None:
+        ...   # 返回**原始**分段，不做过滤和措辞
+    async def health(self) -> bool:
+        return True
+```
+
+```bash
+ROUTER=amap
+```
+
+`plan()` 的三个返回值语义决定了降级行为，别弄混：
+
+| 返回 | 含义 | 后果 |
+| :--- | :--- | :--- |
+| `None` | 服务不可用（超时 / 错误码 / 拿不到目的地坐标） | 降级到 `builtin` + **如实播报** |
+| `[]` | 服务正常，但确实没有路线 | 播报「未能规划到步行路线」 |
+| `[...]` | 正常路线 | 交给 `rules/route.py` 加工 |
+
+> ★ **真实地图 API 不提供任何障碍元数据**（百度没有「避开天桥」这个参数），
+> 所以它只能扫文本**警告**，绝不能声称「已避开」—— 那会让视障用户放心走向
+> 一座真的天桥。详见 `app/core/rules/route.py` 的模块注释。
+
+> ★ 真实地图只认**坐标**，「最近的地铁站」这种地名要先地理编码（本轮没做），
+> 所以目的地坐标走可选的 `extra.destination_geo`；不传会如实降级。
+
+**没有 AK 也想跑通百度那条分支**：把 `BAIDU_FIXTURE` 指向一份响应 JSON，
+就跳过 HTTP 直接读本地文件 —— 解析、警告、降级整条链都能验
+（`data/baidu_walking_sample.json` 是现成样本）。
+
 ### 其他
 
-可注册的类别：`vlm` / `detector` / `layer` / `framesource`。
+可注册的类别：`vlm` / `detector` / `layer` / `framesource` / `router`。
 `GET /v1/health` 会列出所有已注册的实现。
 
 ---
@@ -242,7 +282,8 @@ pytest -v
 | `test_scene.py` | 场景分类与去重粒度 |
 | `test_fall.py` | 跌倒状态机（覆盖最全） |
 | `test_sos.py` | 幂等、升级链、绝不自动拨 120 |
-| `test_route.py` | 无障碍过滤、导航播报 |
+| `test_route.py` | 无障碍过滤、导航播报、**「已避开」与「请注意」的诚实性边界** |
+| `test_baidu_router.py` | 百度响应解析（含 status!=0、缺字段、空路线、turn_type 容错） |
 
 ---
 

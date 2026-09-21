@@ -25,6 +25,7 @@ from app.contracts import (
     Frame,
     emergency_detail,
     make_dedup_key,
+    route_dedup_key,
     route_detail,
     safety_detail,
     system_detail,
@@ -114,7 +115,7 @@ SAFETY = Announcement(
 NAVIGATION = Announcement(
     text="沿人行道直行 200 米，然后右转进入建国路",
     ttl_ms=15000,
-    dedup_key="nav:step:0",
+    dedup_key=route_dedup_key("r1", "step", 0),
     source="navigation",
     priority=PRIORITY_IMPORTANT,
     id="ann_nav_001",

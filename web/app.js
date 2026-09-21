@@ -154,6 +154,14 @@ document.addEventListener("drop", (e) => {
 // 其余路由
 // =====================================================================
 
+// 从一组输入框里读坐标，格式约定 {"lat", "lng"}，坐标系 WGS-84。
+// 填不全就返回 null —— 绝不拿半个坐标去规划。
+function readGeo(prefix) {
+  const lat = parseFloat($(`${prefix}-lat`).value);
+  const lng = parseFloat($(`${prefix}-lng`).value);
+  return Number.isFinite(lat) && Number.isFinite(lng) ? { lat, lng } : null;
+}
+
 document.querySelectorAll("button[data-route]").forEach((btn) => {
   btn.onclick = async () => {
     const path = btn.dataset.route;
@@ -163,6 +171,15 @@ document.querySelectorAll("button[data-route]").forEach((btn) => {
     );
     if (btn.dataset.dest) {
       body.extra = { ...(body.extra || {}), destination: $("dest").value };
+    }
+    if (btn.dataset.geo) {
+      // 第三层的坐标。真实地图只认坐标、不认地名，所以目的地坐标做成可选的
+      // `destination_geo`：留空时不发，后端会如实降级回内置路网并播报说明。
+      const origin = readGeo("geo");
+      const destGeo = readGeo("dest-geo");
+      body.extra = { ...(body.extra || {}) };
+      if (origin) body.extra.geo = origin;
+      if (destGeo) body.extra.destination_geo = destGeo;
     }
     try {
       const r = await fetch(path, {

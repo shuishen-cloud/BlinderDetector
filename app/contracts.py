@@ -196,6 +196,19 @@ def vision_dedup_key(detail: dict[str, Any]) -> str:
     return f"vision:scene:{detail.get('scene_key', 'default')}"
 
 
+def route_dedup_key(route_id: str, kind: str, key: str | int) -> str:
+    """第三层的去重键 —— 集中在这里，别在各处手拼 f-string。
+
+    `kind` ∈ `step`（分步指令）/ `warn`（无障碍警告）/ `notice`（降级、无路线）。
+
+    为什么要有这个函数：第三层的键格式原本散落在 `rules/route.py` 和
+    `mock/fixtures.py` 里各写一遍，而它们已经漂了 —— fixture 写的是
+    `nav:step:0`，真实产出是 `nav:{route_id}:step:{i}`。
+    格式一旦集中，就不会再有第二份「看起来对」的版本。
+    """
+    return f"nav:{route_id}:{kind}:{key}"
+
+
 def announcement(source: str, priority: int, text: str, ttl_ms: int, dedup_key: str, **kw) -> Announcement:
     """按 source 自动配好震动模式的便捷构造器。"""
     haptic = kw.pop("haptic", None)

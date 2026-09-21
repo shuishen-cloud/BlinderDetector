@@ -108,8 +108,20 @@
       </div>
       <div class="row">
         <input type="text" id="dest" value="最近的地铁站" placeholder="目的地">
-        <button class="btn" data-route="/v1/navigation/route" data-dest="1">规划路线</button>
+        <button class="btn" data-route="/v1/navigation/route" data-dest="1" data-geo="1">规划路线</button>
       </div>
+      <div class="row">
+        <input type="text" id="geo-lat" value="39.9087" placeholder="起点纬度" size="9">
+        <input type="text" id="geo-lng" value="116.3975" placeholder="起点经度" size="9">
+        <span class="hint">→</span>
+        <input type="text" id="dest-geo-lat" value="39.9136" placeholder="终点纬度" size="9">
+        <input type="text" id="dest-geo-lng" value="116.4142" placeholder="终点经度" size="9">
+      </div>
+      <p class="hint">
+        真实地图（百度）**只认坐标、不认地名**，「最近的地铁站」这种名字得先地理编码
+        （本轮没做）。所以目的地坐标填了才走真实地图；留空会降级到内置演示路网，
+        并**如实播报**说明。改动坐标再点「规划路线」，可以验证起点确实参与了规划。
+      </p>
       <p class="hint">
         「推进时钟」发的是 <code>now_ms=9999999999999</code>（公元 2286 年），
         用来强行跑完跌倒 / 求助的升级链。闸门不会因此卡住 —— 见

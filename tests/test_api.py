@@ -334,3 +334,69 @@ def test_data_mount_serves_test_assets(client):
         pytest.skip("还没生成测试素材：python scripts/make_test_video.py")
     assert client.get("/data/demo.mp4").status_code == 200
 
+
+# --------------------------------------------------------------------------
+# 第三层：extra 是不可信输入，坏值不许把链路打崩
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("extra", [
+    {"destination": "X", "max_steps": "abc"},
+    {"destination": "X", "max_steps": 2.7},
+    {"destination": "X", "max_steps": None},
+    {"destination": "X", "avoid": 5},
+    {"destination": "X", "avoid": {"overpass": True}},
+    {"destination": "X", "avoid": [1, 2, None]},
+    {"destination": "X", "geo": "not-a-dict"},
+    {"destination": "X", "destination_geo": [1, 2]},
+    {"destination": "X", "geo": {"lat": "abc", "lng": 1}},
+])
+def test_bad_extra_values_never_500(client, extra):
+    """★ `extra` 是**任意 JSON**，不能信。
+
+    实测过：`max_steps` 传字符串、`avoid` 传数字都会让 `list[:n]` /
+    `in` 抛 TypeError 冒成 500 —— 客户端手滑一次，整条播报链路就没了。
+    这里所有值都该被收敛成合法默认值，而不是崩掉。
+    """
+    r = client.post("/v1/navigation/route",
+                    json={"frame_id": "f", "ts": 1, "extra": extra})
+    assert r.status_code == 200
+
+
+def test_empty_avoid_is_honoured_not_replaced_by_default(client):
+    """`avoid: []` 是合法意图（这次不避开任何东西），不能被默认值顶掉。"""
+    r = client.post("/v1/navigation/route", json={
+        "frame_id": "f", "ts": 1, "extra": {"destination": "X", "avoid": []}})
+    detail = [a["detail"] for a in r.json()["announcements"]
+              if a["detail"].get("kind") == "route"][0]
+    assert detail["warnings"] == []
+
+
+def test_unknown_router_boots_and_degrades_honestly(monkeypatch):
+    """★ `ROUTER` 写错名字不能让服务起不来。
+
+    `registry.get()` 抛的 KeyError 发生在 `create_app()` 的图层构造期 ——
+    不兜住的话整个 uvicorn 直接退出，连 `/v1/health` 都打不开。
+    这与本项目「配置不对也要降级并如实播报」的立身之本相反。
+    """
+    from app import config
+
+    monkeypatch.setattr(config, "ROUTER", "no-such-router")
+    with TestClient(create_app()) as c:
+        r = c.post("/v1/navigation/route",
+                   json={"frame_id": "f", "ts": 1, "extra": {"destination": "X"}})
+        assert r.status_code == 200
+        texts = [a["text"] for a in r.json()["announcements"]]
+        assert any("演示路网" in t for t in texts), \
+            "配置写错必须如实播报，不能静默地用兜底路网"
+
+
+def test_blank_router_falls_back_to_builtin(monkeypatch):
+    """`ROUTER=` 留空（.env.example 里 AK/FIXTURE 都是留空的，很容易照抄）
+    不该抛异常，直接用兜底实现。"""
+    from app import config
+
+    monkeypatch.setattr(config, "ROUTER", "")
+    with TestClient(create_app()) as c:
+        assert c.get("/v1/health").status_code == 200
+
