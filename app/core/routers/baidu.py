@@ -148,13 +148,40 @@ def parse_walking_response(payload: dict) -> list[dict] | None:
         #   和绝大多数博客写的是复数 `instructions`。**文档是错的。**
         #   两种都认，但单数放在前面：有实测样本的那个才是主。
         text = _clean(step.get("instruction") or step.get("instructions") or "")
-        if not text:
-            continue
+        # ★ 这里**不再**跳过没有文字的段（原来会 `continue`）：
+        #   几何要独立于文字的取舍。漏掉一段的路径点，图上就会出现一条
+        #   凭空的连线 —— 那是**编出来的路**，比不画严重。
+        #   「没有文字的段不播报」这条规则移到 `rules/route.py::build_detail`
+        #   （那里才是决定播什么的地方）。
         out.append({
             "instruction": text,
             "distance_m": _to_float(step.get("distance")),
             "maneuver": _maneuver_of(step.get("turn_type"), text),
+            "path": _parse_path(step.get("path")),
         })
+    return out
+
+
+def _parse_path(raw) -> list[list[float]]:
+    """把百度的 `path` 字符串转成 `[[经度, 纬度], ...]`。
+
+    实测格式：`"112.55599982546,37.964644419508;112.55594002424,..."`
+    —— **经度在前**，11 位小数（后面 `rules/route.py` 会量化到 5 位）。
+
+    ★ 任何异常一律返回 `[]`，绝不让它把整条路线变成 `None` ——
+      几何画不出来只是少一张图，路线本身还得照常播报。
+    """
+    if not isinstance(raw, str) or not raw:
+        return []
+    out: list[list[float]] = []
+    for pair in raw.split(";"):
+        parts = pair.split(",")
+        if len(parts) != 2:
+            continue
+        try:
+            out.append([float(parts[0]), float(parts[1])])
+        except ValueError:
+            continue
     return out
 
 
@@ -175,6 +202,9 @@ class BaiduRouter:
     """百度步行路线规划。失败一律返回 None，由图层负责降级。"""
 
     name = "baidu"
+    #: 返回的几何用的坐标系。★ 与上面 `ret_coordtype` 是同一件事的两处表述，
+    #:  改动必须成对 —— 见 `base.py` 的说明（它**不进 Protocol**，用 getattr 读）。
+    coord_system = "bd09ll"
 
     def __init__(
         self,
@@ -201,6 +231,15 @@ class BaiduRouter:
             return None
         payload = await self._fetch(origin, destination)
         if payload is None:
+            return None
+        # ★ 先挡住「根本不是 JSON 对象」的响应，再 `payload.get`。
+        #   `parse_walking_response` 里有一模一样的检查，但它排在这一行**之后** ——
+        #   少了这一行，一个 JSON 数组（比如 BAIDU_FIXTURE 指向的文件存成了
+        #   `[1,2,3]`）会在 `.get` 上抛 AttributeError 冒成 500，
+        #   而本模块的承诺是「任何形状的失败都不许变成 500」。
+        if not isinstance(payload, dict):
+            _log.warning("百度返回的不是 JSON 对象（%s），按服务不可用处理",
+                         type(payload).__name__)
             return None
 
         global _last_failure
@@ -230,8 +269,14 @@ class BaiduRouter:
             "origin": _coord(origin),
             "destination": _coord(destination),
             "ak": self.ak,
-            "coord_type": "wgs84",   # 端侧 GPS 原生就是 WGS-84
+            "coord_type": "wgs84",   # 端侧 GPS 原生就是 WGS-84（输入坐标系）
             "steps_info": "1",       # ★ 不传可能没有 steps，见模块 docstring
+            # ★ 显式写死返回坐标系，不靠百度默认值：
+            #   前端地图（百度 JSAPI GL）要的就是 BD-09，而默认值哪天变了
+            #   我们不会知道 —— 那份 `BAIDU_FIXTURE` 样本也没记录它是在哪个
+            #   ret_coordtype 下抓的。写死之后 `coord_system="bd09ll"` 才是
+            #   我们自己控制的事实，不是一个碰巧成立的假设。
+            "ret_coordtype": "bd09ll",
         }
         global _last_failure
         try:

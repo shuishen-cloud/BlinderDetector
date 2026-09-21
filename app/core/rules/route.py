@@ -25,6 +25,7 @@
 from __future__ import annotations
 
 import hashlib
+import math
 import re
 from dataclasses import dataclass, field
 
@@ -94,18 +95,34 @@ def build_detail(
     raw_steps: list[dict],
     *,
     router_name: str = "builtin",
+    coord_system: str | None = None,
 ) -> dict:
     """把 router 给的原始分段，按无障碍策略加工成 `route_detail` 的形状。
 
-    `raw_steps` 每段：`{"instruction", "distance_m", "maneuver", "barriers"?}`。
+    `raw_steps` 每段：`{"instruction", "distance_m", "maneuver", "path", "barriers"?}`。
+    `path` 只用于拼路线级几何（可视化），不参与过滤/警告/措辞。
     """
     steps: list[dict] = []
     warnings: list[str] = []
     total = 0.0
     warned_kinds: set[str] = set()
+    geometry: list[list[float]] = []
 
     for raw in raw_steps:
         instruction = raw.get("instruction") or ""
+
+        # ★ 几何**最先收集**，且刻意放在下面所有 `continue` 之前：
+        #   一段路可能因为「没有可播的文字」或「被无障碍过滤掉」而不进 steps，
+        #   但它的路径点必须留下 —— 漏掉一段，地图上就会出现一条**凭空的连线**，
+        #   那是在编一条没走过的路，比不画严重得多。
+        geometry.extend(_clean_points(raw.get("path")))
+
+        if not instruction:
+            # 没有可播文字的段：不播报、不计入总距离。它的路径点上面已经留下了。
+            # （这条规则原先在 `routers/baidu.py` 的解析里，移到这里是因为
+            #   「播什么」是策略层的决定，解析层只管把数据原样搬过来。）
+            continue
+
         barriers = raw.get("barriers")
 
         # ---- 路径 1：作者手写了障碍元数据（只有内置路网会走这里）----
@@ -137,13 +154,124 @@ def build_detail(
         })
         total += distance
 
+    # 抽稀 + 量化只影响画图，播报文本与米数一律不受影响。
+    geometry = _simplify(_drop_repeated(geometry)) if geometry else []
+
     return route_detail(
         route_id=_route_id(req, router_name),
         steps=steps,
         total_distance_m=total,
         total_duration_s=total / (req.walk_speed_mps or 1.1),
         warnings=warnings,
+        geometry=geometry,
+        # ★ 只在真有几何时才声称坐标系。没有几何却报 "bd09ll" 是在撒谎 ——
+        #   前端会照着这个值去解析一堆不存在的东西。
+        coord_system=coord_system if geometry else None,
     )
+
+
+def _clean_points(raw) -> list[list[float]]:
+    """只留下能当坐标用的点，形状不对的一律丢掉。
+
+    ★ 为什么必须清理而不是直接 `extend`：`path` 只用于可视化，一个坏点
+      不该让**整条播报**挂掉。而第三方按 README 加一个 `router` 实现时，
+      很自然会把厂商原始的 path 字符串（`"112.5,37.9;..."`）原样塞进来 ——
+      那会在下面 `round()` 上抛 TypeError，冒成 500。
+      「画不出图」是能接受的降级，「播报不出来」不是。
+    """
+    if not isinstance(raw, list):
+        return []
+    out: list[list[float]] = []
+    for p in raw:
+        if not isinstance(p, (list, tuple)) or len(p) < 2:
+            continue
+        try:
+            out.append([float(p[0]), float(p[1])])
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
+def _drop_repeated(points: list[list[float]]) -> list[list[float]]:
+    """去掉相邻段接缝处的重复点。
+
+    实测百度相邻段的末点与下一段的首点是**逐字符相同**的（同一串数字解析出的
+    浮点数也必然相等）。不去掉就会出现零长度线段，有些渲染器会画出尖刺。
+    """
+    out: list[list[float]] = []
+    for p in points:
+        if out and out[-1] == p:
+            continue
+        out.append(p)
+    return out
+
+
+#: 抽稀的垂距阈值（米）。见 `_simplify` 的说明。
+_SIMPLIFY_TOLERANCE_M = 8.0
+#: 坐标量化到几位小数。5 位 ≈ 1.1 米 —— 画图绰绰有余，还省掉四成体积
+#: （百度原始返回是 11 位小数，每点约 34 字符）。
+_COORD_PRECISION = 5
+
+
+def _simplify(
+    points: list[list[float]], tolerance_m: float = _SIMPLIFY_TOLERANCE_M
+) -> list[list[float]]:
+    """Douglas-Peucker 抽稀 + 量化。
+
+    ★ **为什么可以抽稀**：调试台的地图卡片宽约 400–500 px，装 12.5 公里路线
+      约合 25–30 米/像素；而实测 537 个点的平均间距才 23 米 ——
+      **已经是一个点压在一个像素以内**。抽到 8 米阈值，屏幕上几乎逐像素相同。
+
+    ★ **为什么不用均匀抽稀**：按固定间隔丢点会切掉转弯的拐角，路线看起来
+      就"抄近道"了 —— 而那正是要看清的地方。垂距阈值法保住的恰恰是拐点。
+
+    ★ 这只影响**画图**。播报文本、`total_distance_m`、所有米数都来自
+      `steps`，与这里无关。契约里也写明了 `geometry` 不得用于任何决策。
+    """
+    if len(points) < 3:
+        return _quantize(points)
+
+    keep = [False] * len(points)
+    keep[0] = keep[-1] = True
+    stack = [(0, len(points) - 1)]
+    while stack:
+        i, j = stack.pop()
+        if j <= i + 1:
+            continue
+        dmax, idx = 0.0, -1
+        for k in range(i + 1, j):
+            d = _perp_distance_m(points[k], points[i], points[j])
+            if d > dmax:
+                dmax, idx = d, k
+        if idx >= 0 and dmax > tolerance_m:
+            keep[idx] = True
+            stack.append((i, idx))
+            stack.append((idx, j))
+
+    return _quantize([p for p, k in zip(points, keep) if k])
+
+
+def _quantize(points: list[list[float]]) -> list[list[float]]:
+    return [[round(p[0], _COORD_PRECISION), round(p[1], _COORD_PRECISION)]
+            for p in points]
+
+
+def _perp_distance_m(p, a, b) -> float:
+    """点 p 到线段 ab 的垂距（米）。
+
+    用等距圆柱近似（按纬度缩放经度）—— 在这个尺度上够准，而且不需要引
+    任何投影库。不缩经度的话南北向的路线会被算斜，抽稀就会抽错地方。
+    """
+    lat0 = math.radians((a[1] + b[1]) / 2)
+    kx = 111320.0 * math.cos(lat0)
+    ky = 111320.0
+    px, py = (p[0] - a[0]) * kx, (p[1] - a[1]) * ky
+    bx, by = (b[0] - a[0]) * kx, (b[1] - a[1]) * ky
+    seg2 = bx * bx + by * by
+    if seg2 == 0:
+        return math.hypot(px, py)
+    t = max(0.0, min(1.0, (px * bx + py * by) / seg2))
+    return math.hypot(px - t * bx, py - t * by)
 
 
 def _barrier_kind(barrier) -> str:
@@ -212,6 +340,15 @@ def step_announcements(
         text = instruction if has_distance else f"{instruction}，约 {int(dist)} 米"
         ttl, _ = phrasing.ensure_ttl(15_000, text)
 
+        # ★ 几何只挂在**第一条**播报上。
+        #   一次导航会产生 N 条分步播报 + 若干警告，每条 detail 都带整条折线的话，
+        #   `Envelope.publish` 要把它序列化 N 次，`Hub.broadcast` 还要对每个连接
+        #   再发一次 —— 12 KB × N × 客户端数。地图拿到一次就够了。
+        #   代价是形状不齐，所以在这里和契约里都写明。
+        payload = detail if i == 0 else {
+            k: v for k, v in detail.items() if k != "geometry"
+        }
+
         out.append(
             Announcement(
                 text=text,
@@ -220,9 +357,13 @@ def step_announcements(
                 source=SOURCE_NAVIGATION,
                 priority=PRIORITY_IMPORTANT,
                 haptic="short" if step["maneuver"] != "straight" else "none",
-                detail=detail | {"step_index": i},
+                detail=payload | {"step_index": i},
             )
         )
+
+    # ★ 警告同样剥掉几何 —— 见上面「几何只挂在第一条」的说明。
+    #   地图已经从第一条播报拿到了折线，警告再各带一份只是重复传输。
+    bare = {k: v for k, v in detail.items() if k != "geometry"}
 
     for w in detail.get("warnings", []):
         out.append(
@@ -232,7 +373,7 @@ def step_announcements(
                 dedup_key=route_dedup_key(route_id, "warn", w),
                 source=SOURCE_NAVIGATION,
                 priority=PRIORITY_IMPORTANT,
-                detail=detail | {"warning": w},
+                detail=bare | {"warning": w},
             )
         )
     return out
@@ -260,6 +401,9 @@ def _notice(route_id: str, kind: str, text: str, ttl_ms: int = 10_000) -> Announ
 _DEGRADE_REASONS = {
     "router_unavailable": "地图服务暂时不可用，以下路线来自内置演示路网",
     "no_destination_geo": "没有收到目的地坐标，以下路线来自内置演示路网",
+    # ★ 配置写错与「服务挂了」是两回事，措辞必须分开 ——
+    #   同一句话会把排查的人引向网络，而问题其实在 .env。
+    "router_misconfigured": "路线规划配置有误，以下路线来自内置演示路网",
 }
 
 

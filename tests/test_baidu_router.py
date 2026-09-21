@@ -49,6 +49,7 @@ def test_parses_normal_response():
         "instruction": "向正南方向出发,走30米,过马路左转进入新兰路",  # HTML 已剥掉
         "distance_m": 29.0,
         "maneuver": "left",
+        "path": [],          # 这份 payload 的 step 没带 path
     }
     assert steps[1]["maneuver"] == "straight"
 
@@ -145,19 +146,50 @@ def test_accepts_plural_instructions_spelling():
     assert steps[0]["instruction"] == "沿人行道直行"
 
 
-def test_skips_steps_without_text_and_non_dict_steps():
+def test_skips_non_dict_steps():
     payload = {
         "status": 0,
         "result": {"routes": [{"steps": [
-            {"instructions": "", "distance": 10},
-            {"distance": 10},          # 没有文本
-            "not a dict",
+            "not a dict", None, 42,
             {"instructions": "左转", "distance": 20},
         ]}]},
     }
     steps = parse_walking_response(payload)
     assert len(steps) == 1
     assert steps[0]["instruction"] == "左转"
+
+
+def test_empty_text_steps_are_kept_for_geometry():
+    """★ 解析层**不再**丢弃没有文字的段。
+
+    几何是按段拼起来的 —— 漏掉一段的路径点，地图上就会出现一条**凭空的连线**，
+    那是在编一条没走过的路。所以「没有文字的段不播报」这条规则移到了
+    `rules/route.py::build_detail`（那里才决定播什么），解析层只管原样搬运。
+    """
+    payload = {"status": 0, "result": {"routes": [{"steps": [
+        {"instruction": "", "distance": 10, "path": "1,2;3,4"},
+        {"instruction": "左转", "distance": 20},
+    ]}]}}
+    steps = parse_walking_response(payload)
+    assert len(steps) == 2
+    assert steps[0]["instruction"] == ""
+    assert steps[0]["path"] == [[1.0, 2.0], [3.0, 4.0]]
+
+
+@pytest.mark.parametrize("raw,expected", [
+    ("112.5,37.9;112.6,38.0", [[112.5, 37.9], [112.6, 38.0]]),
+    ("", []),
+    (None, []),
+    ("garbage", []),
+    ("1", []),                                  # 缺一半
+    ("1,2;bad;3,4", [[1.0, 2.0], [3.0, 4.0]]),  # 坏点跳过，好点保留
+])
+def test_parse_path_tolerates_garbage(raw, expected):
+    """★ 几何解析绝不能把整条路线变成 None ——
+    画不出图只是少一张图，路线本身还得照常播报。"""
+    from app.core.routers.baidu import _parse_path
+
+    assert _parse_path(raw) == expected
 
 
 @pytest.mark.parametrize("distance", [None, "abc", [], {"a": 1}])
@@ -279,6 +311,24 @@ def test_health_false_when_fixture_file_is_missing():
 
 def test_health_true_when_fixture_file_exists():
     assert _health(fixture="data/baidu_walking_sample.json") is True
+
+
+def test_plan_treats_non_dict_response_as_unavailable(monkeypatch):
+    """★ 一个 JSON 数组（比如 BAIDU_FIXTURE 指向的文件存成了 `[...]`）
+    不能让 `plan()` 抛 AttributeError 冒成 500。
+
+    `parse_walking_response` 里有同样的检查，但它排在这一行**之后** ——
+    本模块的承诺是「任何形状的失败都不许变成 500」。
+    """
+    import asyncio
+
+    router = baidu.BaiduRouter(ak="dummy", fixture="")
+
+    async def fake_fetch(origin, destination):
+        return [1, 2, 3]
+
+    monkeypatch.setattr(router, "_fetch", fake_fetch)
+    assert asyncio.run(router.plan((37.9, 112.5), (37.8, 112.5))) is None
 
 
 def test_plan_without_destination_geo_returns_none():

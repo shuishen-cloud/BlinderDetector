@@ -8,6 +8,8 @@
   —— 抄一份就等于允许两边漂移。
 """
 
+import pytest
+
 from app.core.routers.builtin import RAW_STEPS
 from app.core.rules import route
 
@@ -20,9 +22,11 @@ def req(avoid=None, dest="人民医院"):
     )
 
 
-def detail(avoid=None, dest="人民医院", raw=None, router_name="builtin"):
+def detail(avoid=None, dest="人民医院", raw=None, router_name="builtin",
+           coord_system=None):
     return route.build_detail(
-        req(avoid, dest), RAW_STEPS if raw is None else raw, router_name=router_name
+        req(avoid, dest), RAW_STEPS if raw is None else raw,
+        router_name=router_name, coord_system=coord_system,
     )
 
 
@@ -239,6 +243,118 @@ def test_distance_is_still_appended_when_a_street_name_contains_metre():
               "maneuver": "straight", "distance_m": 200.0}]
     text = route.step_announcements(detail(raw=steps))[0].text
     assert "约 200 米" in text
+
+
+def test_builtin_has_no_geometry_and_claims_no_coord_system():
+    """内置演示路网**没有坐标**。
+
+    既不能给出 `geometry`，也不能声称坐标系 —— 没有几何却报 "bd09ll"
+    是在撒谎，前端会照着它去解析一堆不存在的东西。
+    """
+    d = detail()
+    assert "geometry" not in d
+    assert "coord_system" not in d
+
+
+def test_geometry_is_built_from_step_paths_and_seams_are_dropped():
+    """相邻段的接缝点是重复的（实测百度逐字符相同），不去掉会有零长度线段。
+
+    这里刻意用**不共线**的点 —— 共线的话会被抽稀成两个端点，就测不出接缝了。
+    """
+    steps = [
+        {"instruction": "直行", "maneuver": "straight", "distance_m": 100.0,
+         "path": [[116.0, 39.0], [116.001, 39.001]]},
+        {"instruction": "左转", "maneuver": "left", "distance_m": 50.0,
+         "path": [[116.001, 39.001], [116.002, 39.003]]},
+    ]
+    d = detail(raw=steps, coord_system="bd09ll")
+    assert d["coord_system"] == "bd09ll"
+    assert d["geometry"] == [[116.0, 39.0], [116.001, 39.001], [116.002, 39.003]]
+
+
+def test_empty_text_step_is_not_spoken_but_its_path_is_kept():
+    """★ 没有文字的段不播报，但它的路径点必须留下。
+
+    漏掉一段会在图上出现一条**凭空的连线** —— 那是在编一条没走过的路，
+    比不画严重。所以几何的收集刻意放在过滤逻辑**之前**。
+    """
+    steps = [
+        {"instruction": "", "maneuver": "straight", "distance_m": 10.0,
+         "path": [[116.0, 39.0], [116.0005, 39.0005]]},
+        {"instruction": "左转", "maneuver": "left", "distance_m": 20.0,
+         "path": [[116.0005, 39.0005], [116.001, 39.003]]},
+    ]
+    d = detail(raw=steps, coord_system="bd09ll")
+    assert [s["instruction"] for s in d["steps"]] == ["左转"]
+    assert d["total_distance_m"] == 20.0, "没有文字的段不该计入总距离"
+    assert len(d["geometry"]) == 3, "两段的路径点都要在"
+
+
+@pytest.mark.parametrize("bad", [
+    "112.5,37.9",            # 厂商原始字符串
+    ["112.5,37.9"],          # 字符串当点用
+    [["a", "b"]],            # 不是数字
+    [None], [42], {"a": 1},
+])
+def test_malformed_path_degrades_to_no_geometry_instead_of_crashing(bad):
+    """★ `path` 只用于可视化 —— 一个坏点不该让**整条播报**挂掉。
+
+    第三方按 README 加一个 `router` 实现时，很自然会把厂商原始的 path
+    字符串原样塞进来。那必须降级成「画不出图」，而不是 500 ——
+    「画不出图」能接受，「播报不出来」不能。
+    """
+    steps = [{"instruction": "直行", "maneuver": "straight",
+              "distance_m": 10.0, "path": bad}]
+    d = detail(raw=steps)
+    assert d["steps"], "播报本身必须还在"
+    assert "geometry" not in d
+
+
+def test_geometry_is_simplified_and_quantized():
+    """抽稀只影响画图：共线的一串点应被压成两个端点，坐标量化到 5 位小数。"""
+    path = [[116.0 + i * 0.0001, 39.0] for i in range(50)]  # 一条直线
+    steps = [{"instruction": "直行", "maneuver": "straight",
+              "distance_m": 100.0, "path": path}]
+    d = detail(raw=steps, coord_system="bd09ll")
+    assert len(d["geometry"]) == 2, "共线的点应被抽稀掉"
+    for lng, lat in d["geometry"]:
+        assert round(lng, 5) == lng and round(lat, 5) == lat
+
+
+def test_geometry_keeps_corners():
+    """★ 抽稀用的是垂距阈值法（Douglas-Peucker），**不是均匀抽稀** ——
+    均匀抽稀会切掉拐角，路线看起来就"抄近道"了，而那正是要看清的地方。"""
+    # 一个明显的直角拐弯：东行 20 个点，到 (116.002, 39.0) 后折向北
+    path = ([[116.0 + i * 0.0001, 39.0] for i in range(21)]
+            + [[116.002, 39.0 + i * 0.0001] for i in range(1, 20)])
+    steps = [{"instruction": "直行后左转", "maneuver": "left",
+              "distance_m": 300.0, "path": path}]
+    d = detail(raw=steps, coord_system="bd09ll")
+    assert [116.002, 39.0] in d["geometry"], "拐角点必须保留"
+
+
+def test_only_the_first_announcement_carries_geometry():
+    """★ 几何只挂在**第一条**播报上，连警告也不带。
+
+    否则一次导航的 N 条分步播报 + 若干警告各带一份折线，
+    `Envelope.publish` 要序列化 N 次、`Hub.broadcast` 再对每个连接发一次。
+    实测真实路线：几何原始 12 KB，抽稀后 1.2 KB，但要是每条播报都带，
+    29 段就是 35 KB。
+    """
+    steps = [
+        {"instruction": f"第{i}步", "maneuver": "straight", "distance_m": 100.0,
+         "path": [[116.0 + i * 0.001, 39.0], [116.001 + i * 0.001, 39.001]]}
+        for i in range(3)
+    ]
+    steps.append({"instruction": "过天桥后直行", "maneuver": "straight",
+                  "distance_m": 50.0, "path": []})   # 造一条警告出来
+    anns = route.step_announcements(detail(raw=steps, coord_system="bd09ll"),
+                                    max_steps=3)
+    assert any("warning" in a.detail for a in anns), "这份数据应该产出警告"
+
+    with_geo = [a for a in anns if "geometry" in a.detail]
+    assert len(with_geo) == 1
+    assert with_geo[0].detail["step_index"] == 0
 
 
 def test_builtin_plan_returns_copies_not_the_shared_constant():

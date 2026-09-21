@@ -304,3 +304,70 @@ video { display: block; width: 100%; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; }
 }
+
+/* =====================================================================
+   路线可视化（web/map.js）
+   =====================================================================
+
+   ★ 容器**必须有显式高度**。百度 JSAPI GL 往 #map 里塞 canvas，而 canvas
+     高度取决于容器 —— 高度为 0 时它会**静默不渲染**：页面上什么都没有，
+     控制台也不报错。这是接 JSAPI 最常踩的一个坑。
+   ★ 用一个 position:relative 的包裹层，把 JSAPI 自己注入的样式圈在卡片内，
+     不让它影响页面其它部分。
+   -------------------------------------------------------------------- */
+
+.map-stage {
+  position: relative;
+  height: 260px;
+  border-radius: 10px;
+  overflow: hidden;
+  background: #0a0d14;
+  border: 1px solid var(--line);
+  margin-bottom: 12px;
+}
+
+.map-stage #map,
+.map-stage #map-svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+/* ★ 必须显式写：上面的 `display:block` 会盖掉 UA 对 `[hidden]` 的
+   `display:none`，于是 `hidden` 属性形同虚设。
+   后果很具体：那块**透明的大 SVG 会一直盖在地图 canvas 上并吃掉鼠标事件** ——
+   滚轮缩放和拖动全部失灵，而且不报错。
+   （`.map-msg[hidden]` 是同一个坑，那一条当时写了，这条漏了。）
+
+   另外给 SVG 关掉指针事件：它是纯展示用的，本来就不该接收鼠标。 */
+.map-stage #map-svg[hidden] { display: none; }
+.map-stage #map-svg { pointer-events: none; }
+
+/* 没画东西时的整屏提示。背景压暗一点，让下面的示意图若隐若现。 */
+.map-msg {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  padding: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  font-size: 12.5px;
+  line-height: 1.65;
+  color: var(--fg-2);
+  background: rgba(7, 9, 14, .86);
+}
+
+/* 示意图已经画出来了 —— 提示改成底部一条注脚，别把图盖住。 */
+.map-msg.caption {
+  inset: auto 0 0 0;
+  padding: 8px 12px;
+  font-size: 12px;
+  background: rgba(7, 9, 14, .74);
+}
+
+/* ★ 必须显式写：上面的 display:flex 会盖掉 [hidden] 的默认 display:none。 */
+.map-msg[hidden] { display: none; }

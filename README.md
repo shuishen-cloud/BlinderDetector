@@ -48,9 +48,15 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
-零构建、零 npm：三个静态文件（`web/index.html` 结构 + `app.css` 样式 +
-`app.js` 逻辑），由后端直接托管在 `/` 和 `/static/*`。它**不是交付形态**，
-只用来把「帧 → 后端 → 播报 → WS 推流」这条链路跑通并肉眼验证契约。
+零构建、零 npm：四个静态文件（`web/index.html` 结构 + `app.css` 样式 +
+`app.js` 逻辑 + `map.js` 路线可视化），由后端直接托管在 `/` 和 `/static/*`。
+它**不是交付形态**，只用来把「帧 → 后端 → 播报 → WS 推流」这条链路跑通
+并肉眼验证契约。
+
+> `map.js` 是全套代码里**唯一**依赖第三方运行时的地方（百度 JSAPI GL，
+> 从 CDN 加载）。它满足两条约束：失败**只落在自己的卡片里**（不碰
+> `window.onerror`、不进请求日志），以及**没有它时调试台照常工作** ——
+> 断网或没配 `BAIDU_BROWSER_AK` 时退回纯 SVG 的无底图示意图。
 
 - **帧源 ①视频抽帧** —— 读 `data/demo.mp4`，感知/安全两条流水线**各自独立
   发包**（频率可调），这就是 design.md D2 的两条解耦流水线。
@@ -160,6 +166,7 @@ web/
   index.html            ★ 前端调试台结构（零构建，无打包步骤）
   app.css               样式（深色主题的全部取值）
   app.js                调试台逻辑（帧源 / WS / 渲染）
+  map.js                路线可视化（底图来自百度 JSAPI GL；失败退回 SVG 示意图）
 assets/                 测试素材（手写 SVG）
 data/                   生成的帧和视频；uploads/ 是上传帧的临时落盘处
 scripts/                自检、跑视频、跌倒演示、WS 探针、契约导出

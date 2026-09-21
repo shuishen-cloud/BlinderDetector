@@ -36,8 +36,13 @@ _log = logging.getLogger(__name__)
 #: 默认的无障碍偏好（定义在 rules/route.py，用户可以在 frame.extra 里覆盖）
 DEFAULT_AVOID = route_rules.DEFAULT_AVOID
 
-#: 没有定位时的兜底坐标（天安门，方便调试时辨认）
-FALLBACK_ORIGIN = (39.9087, 116.3975)
+#: 没有定位时的兜底坐标（太原工业学院东区）。
+#:
+#: ★ 与调试台坐标输入框的默认值是**同一组**：这样「前端没传 geo」和
+#:   「前端传了默认值」算出来的路线一致，不会让人误以为哪里出了问题。
+#: ★ 但这**不是**真的定位 —— 系统目前没有定位能力（见 `工作管理.md` 待办）。
+#:   真实地图下没收到 geo 时，图层会额外播一条「没有收到定位」的通告。
+FALLBACK_ORIGIN = (37.957919, 112.543633)
 
 #: 兜底路网的名字。降级时用它，也用它判断「是不是已经在兜底了」。
 FALLBACK_ROUTER = "builtin"
@@ -82,7 +87,10 @@ class NavigationLayer:
             )
             self.router = self.fallback
             self.router_name = FALLBACK_ROUTER
-            self.config_error = "router_unavailable"
+            # ★ 用**独立**的原因码，不能复用 `router_unavailable` ——
+            #   那是给「地图服务真的挂了」用的措辞（「地图服务暂时不可用」）。
+            #   配置拼错说成服务挂了，会把排查的人引向网络而不是 .env。
+            self.config_error = "router_misconfigured"
 
         self.walk_speed_mps = walk_speed_mps
 
@@ -102,7 +110,17 @@ class NavigationLayer:
         # route_id 里带上实际出路线的那一方：降级后的内置路线与原本的
         # 百度路线是两个不同的 id，去重键自然分开，用户能听到降级后的新路线。
         effective = FALLBACK_ROUTER if degrade_reason else self.router_name
-        detail = route_rules.build_detail(req, raw, router_name=effective)
+        # ★ 坐标系要取自**实际出路线的那一方**，不能取 `self.router`：
+        #   「配了 baidu 但降级回内置路网」时，内置路线没有坐标，
+        #   而看 `self.router` 会让我们声称 "bd09ll" —— payload 在撒谎。
+        # ★ 用 getattr 兜底：`coord_system` 按约定不进 Protocol，
+        #   第三方 router 忘了写不该在请求路径上炸。
+        router_used = self.fallback if degrade_reason else self.router
+        detail = route_rules.build_detail(
+            req, raw,
+            router_name=effective,
+            coord_system=getattr(router_used, "coord_system", None),
+        )
 
         anns = route_rules.step_announcements(
             detail, max_steps=_positive_int(extra.get("max_steps"), default=1)

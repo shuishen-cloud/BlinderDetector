@@ -214,7 +214,18 @@ function connect() {
     const m = JSON.parse(e.data);
     if (m.type === "hello") { log(`WS 已连接 ts=${m.data.ts}`, "ok"); return; }
     if (m.type === "pong") return;
-    if (m.type === "announcement") receive(m.data);
+    if (m.type === "announcement") {
+      receive(m.data);
+      // 路线可视化面板（web/map.js，可选加载；没加载时可选链安全跳过）。
+      //
+      // ★ 刻意挂在这里而**不是 `receive()` 里**：`receive()` 在「暂停」时
+      //   直接入队就返回，恢复时走的是 `paint()`，会绕过 `receive` ——
+      //   挂在那儿会让**暂停期间到达的路线永远画不出来**，而「暂停」正是
+      //   这个调试台最常点的按钮。
+      // ★ 地图也不该受 `paused` / `filterMin` 影响：它不是播报墙，
+      //   而是「当前这条路线长什么样」的一个视图。
+      window.LingmouMap?.onAnnouncement(m.data);
+    }
   };
 }
 

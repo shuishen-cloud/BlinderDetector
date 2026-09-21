@@ -48,6 +48,9 @@ RAW_STEPS: list[dict] = [
         "maneuver": maneuver,
         "distance_m": distance,
         "barriers": barriers,
+        # ★ 内置路网**没有坐标**。这个空 `path` 是为了与其他 router 的
+        #   分段形状保持一致（前端/规则层不用判断字段在不在）。
+        "path": [],
     }
     for instruction, maneuver, distance, barriers in _FAKE_NETWORK
 ]
@@ -58,6 +61,10 @@ class BuiltinRouter:
     """内置假路网。永远可用 —— 它是兜底，不该有失败路径。"""
 
     name = "builtin"
+    #: ★ 内置演示路网**没有坐标** —— `_FAKE_NETWORK` 只有文字和距离。
+    #: 前端据此显示「内置演示路网没有坐标，画不出路线」，
+    #: 而不是画一条凭空连起来的线。
+    coord_system = None
 
     async def plan(self, origin, destination) -> list[dict] | None:
         # 刻意不看 origin / destination：这条路网是固定的，假装它随起终点变化

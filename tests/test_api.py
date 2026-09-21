@@ -391,6 +391,36 @@ def test_unknown_router_boots_and_degrades_honestly(monkeypatch):
             "配置写错必须如实播报，不能静默地用兜底路网"
 
 
+def test_health_marks_an_unregistered_router_distinctly(monkeypatch):
+    """★ 名字**没注册**（拼错、或照抄 .env.example 把 `ROUTER=` 留空）
+    与「服务不可用」是两件事。
+
+    混成同一个原因码，会让人去查网络，而问题其实在配置。
+    """
+    from app import config
+
+    monkeypatch.setattr(config, "ROUTER", "no-such-router")
+    with TestClient(create_app()) as c:
+        deg = c.get("/v1/health").json()["degraded"]
+    assert any(d["reason"] == "router_not_registered" for d in deg), deg
+    # 顺带把「有哪些合法取值」也报出来，省得再去翻代码
+    assert any(d.get("known") for d in deg), deg
+
+
+def test_misconfigured_router_does_not_blame_the_network(monkeypatch):
+    """★ 配置拼错时，播报不能复用「地图服务暂时不可用」那句话 ——
+    那会把排查的人引向网络，而问题在 .env。"""
+    from app import config
+
+    monkeypatch.setattr(config, "ROUTER", "no-such-router")
+    with TestClient(create_app()) as c:
+        r = c.post("/v1/navigation/route",
+                   json={"frame_id": "f", "ts": 1, "extra": {"destination": "X"}})
+        texts = [a["text"] for a in r.json()["announcements"]]
+    assert any("配置有误" in t for t in texts), texts
+    assert not any("暂时不可用" in t for t in texts), texts
+
+
 def test_blank_router_falls_back_to_builtin(monkeypatch):
     """`ROUTER=` 留空（.env.example 里 AK/FIXTURE 都是留空的，很容易照抄）
     不该抛异常，直接用兜底实现。"""
@@ -399,4 +429,53 @@ def test_blank_router_falls_back_to_builtin(monkeypatch):
     monkeypatch.setattr(config, "ROUTER", "")
     with TestClient(create_app()) as c:
         assert c.get("/v1/health").status_code == 200
+
+
+# --------------------------------------------------------------------------
+# 前端配置与地图面板
+# --------------------------------------------------------------------------
+
+
+def test_frontend_config_exposes_the_browser_ak(client, monkeypatch):
+    """★ 浏览器端 AK 走这个接口下发，**不能写进 `web/` 里的文件** ——
+    那是静态托管目录，写死等于提交进仓库。每个人的 AK 不同。"""
+    from app import config
+
+    monkeypatch.setattr(config, "BAIDU_BROWSER_AK", "test-browser-ak")
+    r = client.get("/v1/frontend-config")
+    assert r.status_code == 200
+    assert r.json()["baidu_browser_ak"] == "test-browser-ak"
+
+
+def test_frontend_config_never_leaks_the_server_side_ak(client):
+    """★ 服务端 AK 是能真花钱的凭据，绝不能顺手下发给浏览器。
+
+    本机没配时这条空转；只要配了就一定会查 —— 而开发机通常配着，
+    所以它确实挡得住「不小心把两个 AK 混在一起下发」这种错。
+    """
+    from app import config
+
+    if not config.BAIDU_AK:
+        pytest.skip("本机没配服务端 AK")
+    assert config.BAIDU_AK not in client.get("/v1/frontend-config").text
+
+
+def test_map_panel_is_served(client):
+    """`web/` 下新增的文件由 `/static` 自动托管（不用改路由表）。
+
+    仓库里没有别的测试覆盖它 —— 文件被误删、路径写错都不会有人发现，
+    所以在这里钉一条。
+    """
+    r = client.get("/static/map.js")
+    assert r.status_code == 200
+    assert "LingmouMap" in r.text, "map.js 必须导出 window.LingmouMap 给 app.js 调"
+
+
+def test_homepage_includes_the_map_panel(client):
+    html = client.get("/").text
+    assert "/static/map.js" in html
+    assert 'id="map"' in html, "百度 JSAPI 需要这个容器"
+    assert 'id="map-msg"' in html
+    # ★ 顺序要紧：map.js 只注册入口，app.js 加载时就 connect()，所以 map.js 在后
+    assert html.index("/static/app.js") < html.index("/static/map.js")
 

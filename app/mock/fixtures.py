@@ -126,6 +126,18 @@ NAVIGATION = Announcement(
         total_distance_m=820.0,
         total_duration_s=600.0,
         warnings=["路线已避开天桥和地下通道"],
+        # ★ 样例几何**刻意只有 4 个点**：它会出现在自动生成的
+        #   `docs/api-contract.md` 里，塞进真实路线的 500 多个点会让文档
+        #   膨胀十几 KB 且毫无教学价值。真实几何的形状与此完全相同，
+        #   只是点数多得多（已抽稀 + 量化，见 rules/route.py::_simplify）。
+        #   坐标仅供示意。
+        geometry=[
+            [116.3975, 39.9087],
+            [116.4021, 39.9093],
+            [116.4088, 39.9110],
+            [116.4142, 39.9136],
+        ],
+        coord_system="bd09ll",
     ),
 )
 
