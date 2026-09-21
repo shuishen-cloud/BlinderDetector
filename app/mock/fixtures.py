@@ -17,7 +17,6 @@ from app.contracts import (
     PRIORITY_CRITICAL,
     PRIORITY_IMPORTANT,
     RISK_DANGER,
-    RISK_WARNING,
     SOURCE_EMERGENCY,
     SOURCE_PERCEPTION,
     SOURCE_SAFETY,
@@ -184,11 +183,6 @@ BY_SOURCE = {
 }
 
 
-def for_source(source: str) -> Announcement:
-    """mock 实现用这个：给什么 source 就返回对应样例。"""
-    return BY_SOURCE.get(source, DEGRADED)
-
-
 # --------------------------------------------------------------------------
 # 按帧轮换的场景
 #
@@ -230,35 +224,5 @@ PERCEPTION_SCENES = [
     ),
 ]
 
-SAFETY_SCENES = [
-    [],  # 无障碍 —— 这一帧不产生任何播报
-    [SAFETY],  # 前方台阶
-    [
-        Announcement(
-            text="右前方约 4 米有自行车过来，靠左走",
-            ttl_ms=6000,
-            dedup_key=make_dedup_key("obstacle", "bicycle", "right", RISK_WARNING, 4.0),
-            source=SOURCE_SAFETY,
-            priority=PRIORITY_IMPORTANT,
-            id="ann_safety_002",
-            ts=NOW,
-            haptic="short",
-            detail=safety_detail(
-                RISK_WARNING,
-                [
-                    {"type": "bicycle", "position": "right",
-                     "distance_m": 4.0, "distance_sigma_m": 1.6,
-                     "risk": RISK_WARNING, "confidence": 0.79, "track_id": 5},
-                ],
-            ),
-        )
-    ],
-]
-
-
 def perception_for_index(i: int) -> Announcement:
     return PERCEPTION_SCENES[i % len(PERCEPTION_SCENES)]
-
-
-def safety_for_index(i: int) -> list[Announcement]:
-    return SAFETY_SCENES[i % len(SAFETY_SCENES)]

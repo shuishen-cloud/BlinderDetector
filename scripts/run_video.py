@@ -58,7 +58,6 @@ async def main() -> int:
     except (FileNotFoundError, RuntimeError) as e:
         print(f"无法打开输入源: {e}", file=sys.stderr)
         print("先生成测试素材: python scripts/make_test_video.py", file=sys.stderr)
-        print("（Termux 上也可用 bash scripts/make_test_video.sh）", file=sys.stderr)
         return 1
 
     layer_names = [s.strip() for s in args.layers.split(",") if s.strip()]
