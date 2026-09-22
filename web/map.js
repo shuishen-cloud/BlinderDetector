@@ -14,6 +14,21 @@
  *   失败时**不装死**：退回一条纯 SVG 的画法（不用底图、不用 AK、不用网），
  *   并如实标明这是「示意图（无底图）」。答辩现场断网也讲得下去。
  *
+ * **二点五、底图「起来了」和「画出来了」是两件事。**
+ *   百度 JSAPI GL 的渲染器是 WebGL，失败时**不抛异常**：`new BMapGL.Map()`
+ *   照常返回，`#map` 里却永远不会出现 canvas，页面上只剩一块空白底图 ——
+ *   控制台里也只有它自己的日志。原来的降级判据只有「BMapGL 未定义 /
+ *   构造抛异常」，于是这种失败会**静默**漏过去：卡片上写着「底图 = 百度」，
+ *   用户看着一块空白会以为是网慢，而路线其实一根线都没画出来。
+ *   所以建图后要再确认一次画布真的出现了（见 watchRenderer）。
+ *   手机 WebView / 省电模式拿不到 WebGL 是常态，不是边缘情形。
+ *
+ * **二点六、百度在 AK 校验失败时是直接 `alert()` 的。**
+ *   手机上那是个**模态框**：冻住整页（连底部「一键求助」都按不动），
+ *   而且只有用户手动点确定才消失 —— 对看不见屏幕的人尤其糟。
+ *   所以加载期间接管 `window.alert`，把话留下当失败原因，之后还原
+ *   （见 loadMapScript / restoreAlert）。
+ *
  * **三、起点/终点标记取自路线几何本身，不是输入框。**
  *   输入框是 **WGS-84**，而百度返回的几何是 **BD-09**（实测同一组数字两种
  *   坐标系算出来的起点差约 1 公里）。拿输入框的值在 BD-09 底图上打标记，
@@ -102,7 +117,31 @@
   //: 底图不可用时的原因，用来在示意图的注脚里**如实说明**是哪一种失败。
   let mapFailReason = "";
 
+  //: 加载/建图期间百度 alert() 出来的话（AK 校验失败走的就是这条路）。
+  let akAlert = "";
+
+  //: 原始的 window.alert —— 用完要还回去，别把整页的 alert 都改掉。
+  const realAlert = typeof window.alert === "function" ? window.alert : null;
+
+  function restoreAlert() {
+    if (realAlert) window.alert = realAlert;
+  }
+
   function loadMapScript(ak) {
+    // ★ 接管 window.alert（见模块头注释「二点六」）：百度 AK 校验失败时
+    //   直接 alert()，在手机上是冻住整页的模态框（连底部「一键求助」都
+    //   按不动）。页面自己从不调 alert()，所以这里换成一个收集器。
+    //
+    // ★★ 还原点**不能**放在 `finish()` 里。★★
+    //   实测：`getscript` 加载完、库回调「就绪」之后，百度才会在处理
+    //   `sign_check` / 瓦片时把 alert() 弹出来。在 `finish()` 里还回去，
+    //   等于恰好把要挡的那一个放过去 —— 页面照样被模态框冻住，而我们的
+    //   降级逻辑（也是 JS）在用户点掉之前一行都跑不了。
+    //   所以还原点只有两个：**确认底图真的画出来了**，或**确认它失败**。
+    //   外加一条硬超时兜底，别让 alert 被永远占着。
+    window.alert = (msg) => { akAlert = String(msg == null ? "" : msg); };
+    setTimeout(restoreAlert, 20000);
+
     // JSAPI GL 用 <script> 引入 —— 零 npm、零构建，符合项目约束。
     //
     // ★★ 必须带 `callback` 参数。★★
@@ -116,7 +155,11 @@
     //   并在库就绪时回调我们指定的全局函数。
     return new Promise((resolve) => {
       let done = false;
-      const finish = (ok) => { if (!done) { done = true; resolve(ok); } };
+      const finish = (ok) => {
+        if (done) return;
+        done = true;
+        resolve(ok);      // ★ 这里**不还原** alert，见上面那段注释
+      };
 
       window.__lmMapReady = () => { delete window.__lmMapReady; finish(true); };
 
@@ -149,6 +192,8 @@
       setSrc("底图 = 百度");
       hideMessage();
       if (lastRoute) drawRoute(lastRoute);   // 底图晚于路线到达：补画
+      // ★ 建图没抛异常 ≠ 画得出来：GL 渲染器起不来时它一声不响地什么都不画。
+      watchRenderer();
     } catch (e) {
       // 库加载出来了但建图失败 —— 最常见的原因是 Referer 白名单不含当前地址。
       mapFailReason = `地图初始化失败（${e.message}）—— 若 AK 配了 Referer 白名单，`
@@ -157,9 +202,33 @@
     }
   }
 
+  /* ★ 建图成功不等于画得出来：GL 渲染器起不来时 `#map` 里永远不会有
+   *   canvas，页面上只留下一块空白底图。稍等片刻确认画布存在，没有就
+   *   如实降级成示意图。等的是几百毫秒的量级 —— 画布是同步建的，
+   *   这么久了还没有，就是真没起来。 */
+  function watchRenderer(tries = 6) {
+    if (!mapReady) return;                                  // 已经降级过了
+    if (document.querySelector("#map canvas")) {            // 正常：GL 就绪
+      restoreAlert();
+      return;
+    }
+    if (tries <= 0) {
+      mapFailReason = akAlert
+        ? `百度地图没能初始化（${akAlert.slice(0, 120)}）`
+        : "这个浏览器没能给出 WebGL 画布（多半是不支持 WebGL）";
+      mapFailed();
+      return;
+    }
+    setTimeout(() => watchRenderer(tries - 1), 400);
+  }
+
   function mapFailed() {
     mapReady = false;
     setSrc("底图不可用");
+    // ★ 把 #map 一起藏掉：它自己会挂一张白灰色的 bg.png，留在示意图底下
+    //   会让人以为「图在这儿，只是没加载完」—— 又是一次沉默的失效。
+    document.querySelector(".map-stage")?.classList.add("nomap");
+    restoreAlert();
     // 已经有路线的话直接改画示意图；没有就只留提示。
     if (lastRoute) drawRoute(lastRoute);
     else showMessage(`路线仍然照常接收 —— 有坐标时会画成无底图示意图。\n${mapFailReason}`);
@@ -217,6 +286,7 @@
   function drawOnMap(pts) {
     setSrc("底图 = 百度");
     hideMessage();
+    document.querySelector(".map-stage")?.classList.remove("nomap");
 
     const path = pts.map(([lng, lat]) => new BMapGL.Point(lng, lat));
 

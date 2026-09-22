@@ -2,6 +2,7 @@
 
 import base64
 import json
+import re
 
 import pytest
 from starlette.testclient import TestClient
@@ -314,7 +315,7 @@ def test_upload_leaves_no_temp_file(client):
 
 
 # --------------------------------------------------------------------------
-# 前端调试台与素材托管
+# 前端页面与素材托管
 # --------------------------------------------------------------------------
 
 
@@ -322,7 +323,33 @@ def test_homepage_serves_the_console(client):
     r = client.get("/")
     assert r.status_code == 200
     assert r.headers["content-type"].startswith("text/html")
-    assert "调试台" in r.text
+    assert "灵眸伴途" in r.text
+
+
+def test_test_pieces_are_shipped_but_hidden_by_default(client):
+    """★「把测试的部分藏起来」＝ `hidden`，**不是删掉**。
+
+    `app.js` / `map.js` 一律按 id 取 DOM —— 元素真被删掉会当场报错，而契约
+    验证（帧源、其余路由、请求日志、统计）随时要能翻出来。所以钉两条：
+    ① 开发者面板在页面上、且默认 hidden；② 测试件确实都关在面板里面。
+
+    ★ 第 ② 条靠**位置**判断而不是靠 class：`hidden` 是浏览器行为，
+    元素一旦漏到 `#devPanel` 外面（比如以后有人挪错一行），手机视图上
+    就会冒出「开始发帧」这种按钮，而上面那条 `hidden` 照样是绿的。
+    """
+    html = client.get("/").text
+
+    assert re.search(r'id="devPanel"[^>]*\shidden', html), "开发者面板必须默认隐藏"
+
+    panel = html.index('id="devPanel"')
+    for el in ("loopBtn", "perMs", "dropzone", "logTail", "stFrames"):
+        assert html.index(f'id="{el}"') > panel, f"{el} 是测试件，应该关在开发者面板里"
+
+    # 手机视图得留着产品功能：播报开关、播报流、导航、一键求助
+    phone = html.index('id="app"')
+    for el in ("ttsBtn", "feed", "dest", "geoBtn"):
+        assert html.index(f'id="{el}"') > phone, f"{el} 是产品功能，不该被藏起来"
+    assert "/v1/emergency/sos" in html, "一键求助必须留在手机视图里"
 
 
 def test_data_mount_serves_test_assets(client):
