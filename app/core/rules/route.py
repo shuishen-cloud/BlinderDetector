@@ -300,10 +300,31 @@ def _route_id(req: RouteRequest, router_name: str) -> str:
       · 带上 router 名字，降级后的内置路线与原本的百度路线是**两个不同的 id**，
         去重键自然分开 —— 用户能听到降级后的新路线，而不是被当成重复吞掉；
       · 带上 origin，同一句「人民医院」从天安门出发和从回龙观出发不再撞成同一条。
+
+    ★ **目的地坐标也必须进种子。** 真实地图是由坐标决定路线的，而
+      `req.destination` 那句自然语言「仅用于展示与去重键」（见 `RouteRequest`
+      的注释）。只拿地名做种子的话，同一句话配两组不同坐标会算出同一个
+      route_id —— 于是两次规划产生的每一步 `dedup_key` 完全相同，第二次
+      会被仲裁器整体当成重复丢掉：用户改了终点坐标、点了「规划路线」，
+      图上和播报里却还是上一个目的地的路线，而没有任何提示。
     """
     origin = f"{req.origin[0]:.5f},{req.origin[1]:.5f}"
-    seed = f"{router_name}|{origin}|{req.destination}".encode("utf-8")
+    # 没有坐标的老路线（内置路网）保持空串 —— 不去动它们既有的 id。
+    dest_geo = (
+        f"{req.destination_geo[0]:.5f},{req.destination_geo[1]:.5f}"
+        if req.destination_geo is not None else ""
+    )
+    seed = f"{router_name}|{origin}|{dest_geo}|{req.destination}".encode("utf-8")
     return "r_" + hashlib.blake2s(seed, digest_size=4).hexdigest()
+
+
+#: 只与**画图**有关、且只挂在第一条播报上的字段。
+#:
+#: ★ `coord_system` 必须和 `geometry` **成对剥掉**。契约（`route_detail`）和
+#:   `build_detail` 都写明「只在真有几何时才声称坐标系」；留一个没有几何的
+#:   `bd09ll`，等于告诉消费方「这份 payload 带着坐标」，而它并没有 ——
+#:   与「没有几何却报 bd09ll 是在撒谎」是同一件事，只是换到了播报层。
+_GEO_KEYS = ("geometry", "coord_system")
 
 
 def step_announcements(
@@ -345,8 +366,9 @@ def step_announcements(
         #   `Envelope.publish` 要把它序列化 N 次，`Hub.broadcast` 还要对每个连接
         #   再发一次 —— 12 KB × N × 客户端数。地图拿到一次就够了。
         #   代价是形状不齐，所以在这里和契约里都写明。
+        #   `coord_system` 与几何同进同出 —— 见 `_GEO_KEYS`。
         payload = detail if i == 0 else {
-            k: v for k, v in detail.items() if k != "geometry"
+            k: v for k, v in detail.items() if k not in _GEO_KEYS
         }
 
         out.append(
@@ -363,7 +385,7 @@ def step_announcements(
 
     # ★ 警告同样剥掉几何 —— 见上面「几何只挂在第一条」的说明。
     #   地图已经从第一条播报拿到了折线，警告再各带一份只是重复传输。
-    bare = {k: v for k, v in detail.items() if k != "geometry"}
+    bare = {k: v for k, v in detail.items() if k not in _GEO_KEYS}
 
     for w in detail.get("warnings", []):
         out.append(

@@ -309,8 +309,22 @@ def test_health_false_when_fixture_file_is_missing():
     assert _health(fixture="data/does-not-exist.json") is False
 
 
-def test_health_true_when_fixture_file_exists():
+def test_health_true_when_fixture_file_exists(monkeypatch):
+    """★ 显式清掉 `_last_failure`：它是模块级状态，别的用例可能留下值，
+    不清的话这条断言就变成「取决于跑测试的顺序」。"""
+    monkeypatch.setattr(baidu, "_last_failure", None)
     assert _health(fixture="data/baidu_walking_sample.json") is True
+
+
+def test_health_false_when_fixture_holds_a_failed_response(monkeypatch):
+    """★ fixture 里存的可能就是一份**失败响应**（实测踩到过 status=240）。
+
+    那种情况下 `plan()` 每次都返回 None、图层每次都播「地图服务暂时不可用」，
+    而健康检查只看「文件在不在」的话会一直绿着 —— 正是本模块反复强调的
+    「配置齐全 ≠ 服务可用」在 fixture 这条路上被漏掉。
+    """
+    monkeypatch.setattr(baidu, "_last_failure", "240 APP 服务被禁用")
+    assert _health(fixture="data/baidu_walking_sample.json") is False
 
 
 def test_plan_treats_non_dict_response_as_unavailable(monkeypatch):

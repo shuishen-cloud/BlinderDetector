@@ -322,7 +322,13 @@ class BaiduRouter:
         if self.fixture:
             # 开关打开但文件不在，和「AK 填了但服务被禁用」是同一类问题 ——
             # 每次 plan() 都会降级，健康检查却报 ok。
-            return Path(self.fixture).is_file()
+            #
+            # ★ 文件在也还不够：fixture 里存的可能就是一份**失败响应**
+            #   （样本目录里就有 status=240「APP 服务被禁用」那种）。
+            #   那时 plan() 每次都返回 None、图层每次都播「地图服务暂时不可用」，
+            #   健康检查却一直绿着 —— 正是上面那条「配置齐全 ≠ 服务可用」
+            #   在 fixture 这条路上被漏掉。所以照样叠加「上次真实调用的结果」。
+            return Path(self.fixture).is_file() and _last_failure is None
         if not self.ak:
             return False
         return _last_failure is None

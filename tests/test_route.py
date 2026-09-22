@@ -333,6 +333,23 @@ def test_geometry_keeps_corners():
     assert [116.002, 39.0] in d["geometry"], "拐角点必须保留"
 
 
+def test_route_id_distinguishes_destination_coordinates():
+    """★ 目的地**坐标**必须进 route_id 的种子。
+
+    真实地图由坐标决定路线，`destination` 那句自然语言只用于展示。
+    种子漏掉坐标的话，同一句话配两组不同坐标会算出同一个 route_id ——
+    两次规划的每一步 dedup_key 完全相同，第二次会被仲裁器整体当成重复丢掉：
+    用户改了终点坐标、点了「规划路线」，看到的却还是上一个目的地的路线。
+    """
+    def rid(dest_geo):
+        r = route.RouteRequest(origin=(39.9087, 116.3975), destination="人民医院",
+                               destination_geo=dest_geo)
+        return route.build_detail(r, RAW_STEPS, router_name="baidu")["route_id"]
+
+    assert rid((39.9, 116.4)) != rid((39.8, 116.5)), "换了坐标必须是另一条路线"
+    assert rid((39.9, 116.4)) == rid((39.9, 116.4)), "同样的输入要保持稳定"
+
+
 def test_only_the_first_announcement_carries_geometry():
     """★ 几何只挂在**第一条**播报上，连警告也不带。
 
@@ -355,6 +372,30 @@ def test_only_the_first_announcement_carries_geometry():
     with_geo = [a for a in anns if "geometry" in a.detail]
     assert len(with_geo) == 1
     assert with_geo[0].detail["step_index"] == 0
+
+
+def test_coord_system_is_stripped_alongside_geometry():
+    """★ `coord_system` 与 `geometry` 必须**同进同出**。
+
+    `build_detail` 只在真有几何时才声称坐标系；播报层把 geometry 剥掉
+    （只挂在第一条）时必须连 `coord_system` 一起剥 —— 留一个没有几何的
+    "bd09ll"，等于告诉消费方「这份 payload 带着坐标」，而它并没有。
+    与「没有几何却报坐标系是在撒谎」是同一件事，只是换到了播报层。
+    """
+    steps = [
+        {"instruction": f"第{i}步", "maneuver": "straight", "distance_m": 100.0,
+         "path": [[116.0 + i * 0.001, 39.0], [116.001 + i * 0.001, 39.001]]}
+        for i in range(3)
+    ]
+    steps.append({"instruction": "过天桥后直行", "maneuver": "straight",
+                  "distance_m": 50.0, "path": []})
+    anns = route.step_announcements(detail(raw=steps, coord_system="bd09ll"),
+                                    max_steps=3)
+    assert any("geometry" in a.detail for a in anns), "第一条应该带着几何"
+
+    for a in anns:
+        assert ("coord_system" in a.detail) == ("geometry" in a.detail), a.detail
+
 
 
 def test_builtin_plan_returns_copies_not_the_shared_constant():

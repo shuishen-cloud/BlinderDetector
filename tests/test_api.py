@@ -460,6 +460,19 @@ def test_frontend_config_never_leaks_the_server_side_ak(client):
     assert config.BAIDU_AK not in client.get("/v1/frontend-config").text
 
 
+def test_tests_never_use_the_configured_real_router(client):
+    """★ 测试必须**离线且确定**，不能取决于开发机的 `.env`。
+
+    开发机常配着 `ROUTER=baidu`（要看调试台的真实路线）。少了这条，
+    `/v1/navigation/route` 的用例就会真的去打百度接口 —— 结果取决于
+    网络和配额，而且**照样会绿**（拿不到路线时图层会如实降级回内置路网），
+    所以是个没人会发现的假绿。钉死见 `tests/conftest.py`。
+    """
+    layer = client.app.state.layers["navigation"]
+    assert layer.router_name == "builtin", \
+        "用例里的导航层必须是内置路网 —— 别让测试去打真实地图接口"
+
+
 def test_map_panel_is_served(client):
     """`web/` 下新增的文件由 `/static` 自动托管（不用改路由表）。
 

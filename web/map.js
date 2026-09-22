@@ -38,19 +38,41 @@
   // 导航层发出的「系统通告」的 reason（见 app/core/rules/route.py 的 _notice）。
   // ★ 只有这些才该清掉地图 —— 别的层也会发 system 通告（比如 VLM 降级），
   //   那些与路线无关，不该把地图擦了。
+  // ★ `degraded_*` 这几个键与后端 `rules/route.py::_DEGRADE_REASONS` 成对
+  //   （通告的 reason 是 `degraded_` + 那张表里的键）。后端加一个降级原因，
+  //   这里必须跟着加 —— 漏一个，地图就会继续画着上一条已作废的路线。
   const NAV_NOTICES = new Set([
     "no_route",
-    "no_origin",
     "degraded_router_unavailable",
     "degraded_no_destination_geo",
+    "degraded_router_misconfigured",
   ]);
+
+  // ★ `no_origin` 刻意**不在**上面那组里。
+  //   它说的是「没收到定位，这次从默认位置起算」—— 这是**关于起点**的一句
+  //   如实说明，不是在说这条路线作废。路线是照常规划出来的，把它一并擦掉
+  //   等于对用户说「路线没了」，而播报流里那条 route 还好端端地挂着。
+  //   本系统目前**没有定位能力**（`extra.geo` 得手填，见 navigation.py 的
+  //   FALLBACK_ORIGIN 注释），所以「只传了 destination_geo」是**常态**而不是
+  //   边缘情形：放进作废组，等于每次规划都在画完之后立刻把刚画好的线擦掉。
+  //   正确处理是：路线照画，另外在卡片上标明起点不是定位。
+  const ORIGIN_NOTICES = new Set(["no_origin"]);
 
   // ====================================================================
   // 卡片状态
   // ====================================================================
 
+  //: 起点不是定位时的注记。叠在来源标签后面，**不影响地图上画了什么**。
+  let originCaveat = "";
+  //: 最近一次 `setSrc()` 的文本。注记到达时要重贴一遍标签，得知道贴什么。
+  let srcText = "";
+
   function setSrc(text) {
-    if (SRC) SRC.textContent = text;
+    srcText = text;
+    if (!SRC) return;
+    SRC.textContent = originCaveat
+      ? (text ? `${text} · ${originCaveat}` : originCaveat)
+      : text;
   }
 
   function showMessage(text, { caption = false } = {}) {
@@ -163,6 +185,11 @@
     if (!hasGeo && sameRoute) return;
 
     lastRouteId = d.route_id || lastRouteId;
+
+    // ★ 新路线一到，上一条的起点注记就**过期**了 —— 留着它会在下次拿到
+    //   真定位时继续显示「起点非定位」，那是反方向的假话。
+    //   这次若仍然没定位，它自己那条 no_origin 通告会紧接着把它设回来。
+    originCaveat = "";
 
     if (!hasGeo) {
       // 真的没有坐标（内置演示路网就是这样）。
@@ -320,14 +347,26 @@
       return;
     }
 
+    if (a.detail.kind !== "system") return;
+
     // ★ 降级 / 无路线的通告必须让地图**跟着作废**。
     //   否则「未能规划到步行路线」都播出来了，地图上还自信地画着上一条路线
     //   —— 那正是这套系统最忌讳的失效模式（沉默 / 陈旧信息被当成现状）。
-    if (a.detail.kind === "system" && NAV_NOTICES.has(a.detail.reason)) {
+    if (NAV_NOTICES.has(a.detail.reason)) {
       lastRoute = null;
+      originCaveat = "";
       clearOverlays();
       setSrc("路线已作废");
       showMessage(`上一条路线已作废：${a.text}`);
+      return;
+    }
+
+    // ★ 起点相关的通告**不作废地图**。路线照画 —— 它确实是规划出来的，
+    //   只是起点用了默认位置。擦掉它是在说另一句假话（「路线没了」）。
+    //   该做的是把这个前提**标在卡片上**，让人知道这条线是从哪儿起算的。
+    if (ORIGIN_NOTICES.has(a.detail.reason)) {
+      originCaveat = "起点非定位";
+      setSrc(srcText);          // 重贴标签，把注记叠上去
     }
   }
 
