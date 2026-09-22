@@ -176,6 +176,7 @@ DOC = f"""# 灵眸伴途 —— 接口契约
 | `POST` | `/v1/emergency/tick` | `{"now_ms"}` | `Announcement[]` | 推进紧急状态机时钟 |
 | `POST` | `/v1/frame` | multipart | `Announcement` | ★ 统一帧入口（上传图像） |
 | `GET` | `/v1/health` | — | 降级状态 | |
+| `GET` | `/v1/frontend-config` | — | 前端配置 | 调试台地图要的浏览器端 AK（不进仓库） |
 | `WS` | `/v1/stream` | — | 推 `Announcement` | |
 
 **路由可能返回空的 `announcements` 数组**（比如前方无障碍），这不代表出错。
@@ -213,8 +214,9 @@ DOC = f"""# 灵眸伴途 —— 接口契约
 | :--- | :--- | :--- |
 | 通用 | `index` | 帧序号，测试素材按它轮换场景 |
 | 感知 | — | 只用 `image_ref` |
-| 导航 | `destination` | 目的地（自然语言） |
-| 导航 | `geo` | `{{"lat": 39.9, "lng": 116.4}}` 起点坐标（JSON 对象） |
+| 导航 | `destination` | 目的地（自然语言，仅用于展示与去重键） |
+| 导航 | `geo` | `{{"lat": 39.9, "lng": 116.4}}` 起点坐标（JSON 对象，**WGS-84**） |
+| 导航 | `destination_geo` | 目的地坐标（同上格式）。★ 真实地图 API **只认坐标、不认地名**，不传就只能用内置演示路网 |
 | 导航 | `avoid` | 要避开的障碍，默认 `["overpass","underpass","stairs"]` |
 | 求助 | `kind` | `fall_signal` \\| `sos` \\| `cancel` |
 | 求助 | `signal` | 跌倒传感器窗口，见下 |

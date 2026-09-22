@@ -19,9 +19,10 @@
     POST /v1/emergency/tick        推进紧急状态机时钟
     POST /v1/frame                 ★ 统一帧入口（multipart 上传图像）
     GET  /v1/health                健康检查 + 降级状态
+    GET  /v1/frontend-config       调试台地图要的浏览器端 AK（从 .env 下发）
     WS   /v1/stream                统一播报下发
     GET  /                         前端调试台
-    GET  /static/*                 调试台的 css / js
+    GET  /static/*                 调试台的 css / js / 地图面板
     GET  /data/*                   测试素材（demo.mp4 / frames）
 
 启动：

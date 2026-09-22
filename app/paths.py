@@ -14,7 +14,7 @@ from pathlib import Path
 #: 仓库根目录。
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-#: 前端调试台：`index.html` + `app.css` + `app.js`。
+#: 前端调试台：`index.html` + `app.css` + `app.js` + `map.js`（路线可视化）。
 WEB_DIR = BASE_DIR / "web"
 
 #: 测试素材（demo.mp4 / frames）。`GET /data/*` 挂的就是它。

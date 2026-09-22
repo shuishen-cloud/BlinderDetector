@@ -196,6 +196,19 @@ def vision_dedup_key(detail: dict[str, Any]) -> str:
     return f"vision:scene:{detail.get('scene_key', 'default')}"
 
 
+def route_dedup_key(route_id: str, kind: str, key: str | int) -> str:
+    """第三层的去重键 —— 集中在这里，别在各处手拼 f-string。
+
+    `kind` ∈ `step`（分步指令）/ `warn`（无障碍警告）/ `notice`（降级、无路线）。
+
+    为什么要有这个函数：第三层的键格式原本散落在 `rules/route.py` 和
+    `mock/fixtures.py` 里各写一遍，而它们已经漂了 —— fixture 写的是
+    `nav:step:0`，真实产出是 `nav:{route_id}:step:{i}`。
+    格式一旦集中，就不会再有第二份「看起来对」的版本。
+    """
+    return f"nav:{route_id}:{kind}:{key}"
+
+
 def announcement(source: str, priority: int, text: str, ttl_ms: int, dedup_key: str, **kw) -> Announcement:
     """按 source 自动配好震动模式的便捷构造器。"""
     haptic = kw.pop("haptic", None)
@@ -274,8 +287,24 @@ def route_detail(
     total_duration_s: float,
     *,
     warnings: list[str] | None = None,
+    geometry: list[list[float]] | None = None,
+    coord_system: str | None = None,
 ) -> dict[str, Any]:
-    """第三层 detail。steps[] 每条：{"instruction", "distance_m", "maneuver"}"""
+    """第三层 detail。steps[] 每条：{"instruction", "distance_m", "maneuver"}
+
+    `geometry` / `coord_system` 是**可选**的，只为可视化而加：
+
+    - `geometry`：整条路线的折线 `[[经度, 纬度], ...]`，**已经过抽稀与量化**
+      （见 `rules/route.py::_simplify`）。没有坐标的数据源（内置演示路网）
+      就不给这个字段 —— 前端据此显示「画不出路线」，而不是画一条错的。
+    - `coord_system`：`geometry` 用的坐标系。目前只有 `"bd09ll"`
+      （百度返回的默认值，也正好是百度 JSAPI GL 底图要的那个）。
+
+    ★ **`geometry` 只用于可视化，端侧不得据此做任何决策。** 它被抽稀过，
+      有米级偏差；要算距离请用 `total_distance_m`，要做纠偏请等真正的
+      端侧定位（本轮没有）。
+    ★ 抽稀只影响画图：**播报文本与所有米数一律不受影响**。
+    """
     return {
         "kind": "route",
         "route_id": route_id,
@@ -283,6 +312,9 @@ def route_detail(
         "total_distance_m": total_distance_m,
         "total_duration_s": total_duration_s,
         "warnings": warnings or [],
+        # 没有坐标时**不放这两个键**，而不是放空值 —— 让前端能一眼分辨
+        # 「这个数据源没有坐标」和「有坐标但恰好为空」。
+        **({"geometry": geometry, "coord_system": coord_system} if geometry else {}),
     }
 
 

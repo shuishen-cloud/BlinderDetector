@@ -28,6 +28,7 @@ _SCAN_PACKAGES = (
     "app.core.detectors",
     "app.core.layers",
     "app.core.sources",
+    "app.core.routers",
 )
 
 

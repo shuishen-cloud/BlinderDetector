@@ -78,10 +78,25 @@ async def health(request) -> JSONResponse:
     所以这里不只报 ok/false，还把**哪个实现不可用**一起吐出来。
     """
     degraded: list[dict] = []
-    for kind, name in (("vlm", config.VLM_PROVIDER), ("detector", config.DETECTOR)):
+    for kind, name in (
+        ("vlm", config.VLM_PROVIDER),
+        ("detector", config.DETECTOR),
+        # ★ router 也要报：ROUTER=baidu 而 AK 没配时，用户听到的其实是
+        #   内置演示路网 —— 不说出来的话，「没出声」和「系统哑了」就分不开了。
+        ("router", config.ROUTER),
+    ):
         try:
             if not await registry.get(kind, name).health():
                 degraded.append({"reason": f"{kind}_unavailable", "impl": name})
+        except KeyError:
+            # ★ 名字根本没注册（典型：`ROUTER=amap` 但还没写这个实现，或
+            #   照抄 .env.example 时把 `ROUTER=` 留空）。这与「服务不可用」
+            #   是两件事，混成一个原因码会让人去查网络而不是查配置。
+            degraded.append({
+                "reason": f"{kind}_not_registered",
+                "impl": name,
+                "known": registry.names(kind),
+            })
         except Exception as e:
             degraded.append({"reason": f"{kind}_error", "impl": name, "detail": str(e)})
 
@@ -89,17 +104,34 @@ async def health(request) -> JSONResponse:
         "ok": not degraded,
         "degraded": degraded,
         "impls": {k: registry.names(k) for k in
-                  ("vlm", "detector", "layer", "framesource")},
+                  ("vlm", "detector", "layer", "framesource", "router")},
         "config": {
             "VLM_PROVIDER": config.VLM_PROVIDER,
             "DETECTOR": config.DETECTOR,
             "FRAME_SOURCE": config.FRAME_SOURCE,
+            "ROUTER": config.ROUTER,
         },
     })
 
 
+async def frontend_config(request) -> JSONResponse:
+    """调试台启动时要的那点配置。
+
+    ★ 浏览器端 AK **不能写进 `web/` 里的文件** —— 那是静态托管目录，
+      写死等于把它提交进仓库。浏览器 AK 本身是公开的（靠 Referer 白名单
+      保护），但**每个人的 AK 不同**，不该让别人的 AK 成为仓库的一部分
+      —— 与服务端 AK 走 `.env` 是同一套逻辑。
+
+    ★ 这不是「入 Frame 出 Announcement」的路由，与 `/v1/health` 同类：
+      它是给前端自己用的配置，不是业务接口。
+    """
+    return JSONResponse({
+        "baidu_browser_ak": config.BAIDU_BROWSER_AK,
+    })
+
+
 async def homepage(request) -> FileResponse | JSONResponse:
-    """前端调试台。零构建：三个静态文件，没有打包步骤。"""
+    """前端调试台。零构建：四个静态文件，没有打包步骤。"""
     index = WEB_DIR / "index.html"
     if not index.is_file():
         return JSONResponse(
@@ -143,6 +175,8 @@ def build_routes(hub: Hub, envelope: Envelope, layers: dict) -> list:
         Route("/v1/emergency/tick", make_tick(envelope, layers), methods=["POST"]),
         Route("/v1/frame", make_upload_frame(envelope, layers), methods=["POST"]),
         Route("/v1/health", health, methods=["GET"]),
+        # 调试台地图要的浏览器端 AK，从 .env 下发（不写进 web/ 里的文件）。
+        Route("/v1/frontend-config", frontend_config, methods=["GET"]),
         WebSocketRoute("/v1/stream", hub.stream),
         Route("/", homepage, methods=["GET"]),
         # 调试台的 css / js。单文件拆成三个后必须挂出来，

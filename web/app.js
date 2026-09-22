@@ -154,6 +154,14 @@ document.addEventListener("drop", (e) => {
 // 其余路由
 // =====================================================================
 
+// 从一组输入框里读坐标，格式约定 {"lat", "lng"}，坐标系 WGS-84。
+// 填不全就返回 null —— 绝不拿半个坐标去规划。
+function readGeo(prefix) {
+  const lat = parseFloat($(`${prefix}-lat`).value);
+  const lng = parseFloat($(`${prefix}-lng`).value);
+  return Number.isFinite(lat) && Number.isFinite(lng) ? { lat, lng } : null;
+}
+
 document.querySelectorAll("button[data-route]").forEach((btn) => {
   btn.onclick = async () => {
     const path = btn.dataset.route;
@@ -163,6 +171,15 @@ document.querySelectorAll("button[data-route]").forEach((btn) => {
     );
     if (btn.dataset.dest) {
       body.extra = { ...(body.extra || {}), destination: $("dest").value };
+    }
+    if (btn.dataset.geo) {
+      // 第三层的坐标。真实地图只认坐标、不认地名，所以目的地坐标做成可选的
+      // `destination_geo`：留空时不发，后端会如实降级回内置路网并播报说明。
+      const origin = readGeo("geo");
+      const destGeo = readGeo("dest-geo");
+      body.extra = { ...(body.extra || {}) };
+      if (origin) body.extra.geo = origin;
+      if (destGeo) body.extra.destination_geo = destGeo;
     }
     try {
       const r = await fetch(path, {
@@ -197,7 +214,18 @@ function connect() {
     const m = JSON.parse(e.data);
     if (m.type === "hello") { log(`WS 已连接 ts=${m.data.ts}`, "ok"); return; }
     if (m.type === "pong") return;
-    if (m.type === "announcement") receive(m.data);
+    if (m.type === "announcement") {
+      receive(m.data);
+      // 路线可视化面板（web/map.js，可选加载；没加载时可选链安全跳过）。
+      //
+      // ★ 刻意挂在这里而**不是 `receive()` 里**：`receive()` 在「暂停」时
+      //   直接入队就返回，恢复时走的是 `paint()`，会绕过 `receive` ——
+      //   挂在那儿会让**暂停期间到达的路线永远画不出来**，而「暂停」正是
+      //   这个调试台最常点的按钮。
+      // ★ 地图也不该受 `paused` / `filterMin` 影响：它不是播报墙，
+      //   而是「当前这条路线长什么样」的一个视图。
+      window.LingmouMap?.onAnnouncement(m.data);
+    }
   };
 }
 

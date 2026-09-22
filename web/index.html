@@ -11,10 +11,17 @@
   它的作用是**验证契约**，不是交付形态：把「帧 → 后端 → 播报 → WS 推流」
   这条真实链路跑通，看见每一层到底吐出了什么。
 
-  三个文件而不是一个：
+  四个文件而不是一个：
     index.html   结构
     app.css      样式（含深色主题的全部取值）
     app.js       逻辑（含帧源、WS、渲染）
+    map.js       路线可视化（★ 唯一一处外部运行时：百度 JSAPI GL，从 CDN 拉。
+                 加载失败会退回纯 SVG 示意图，且**失败只落在卡片内**，
+                 不影响播报流与请求日志）
+
+  ★ 这是全套代码里**唯一**依赖第三方运行时的地方。它必须满足两条：
+    ① 失败可见且局限在自己的卡片里（不碰 window.onerror、不进请求日志）；
+    ② 没有它时整个调试台照常工作。
 
   ★ 关于 extra.index：两个 mock（MockVLM / MockDetector）都靠 index % 3
     轮换场景。所以这里必须发**递增**的序号 —— 固定 index 会让仲裁器把
@@ -107,13 +114,44 @@
         <button class="btn" data-route="/v1/emergency/tick" data-body='{"now_ms":9999999999999}'>推进时钟</button>
       </div>
       <div class="row">
-        <input type="text" id="dest" value="最近的地铁站" placeholder="目的地">
-        <button class="btn" data-route="/v1/navigation/route" data-dest="1">规划路线</button>
+        <input type="text" id="dest" value="太原站" placeholder="目的地">
+        <button class="btn" data-route="/v1/navigation/route" data-dest="1" data-geo="1">规划路线</button>
       </div>
+      <div class="row">
+        <input type="text" id="geo-lat" value="37.957919" placeholder="起点纬度" size="9">
+        <input type="text" id="geo-lng" value="112.543633" placeholder="起点经度" size="9">
+        <span class="hint">→</span>
+        <input type="text" id="dest-geo-lat" value="37.859717" placeholder="终点纬度" size="9">
+        <input type="text" id="dest-geo-lng" value="112.581822" placeholder="终点经度" size="9">
+      </div>
+      <p class="hint">
+        真实地图（百度）<b>只认坐标、不认地名</b>，「最近的地铁站」这种名字得先地理编码
+        （本轮没做）。所以目的地坐标填了才走真实地图；留空会降级到内置演示路网，
+        并<b>如实播报</b>说明。改动坐标再点「规划路线」，可以验证起点确实参与了规划。
+      </p>
       <p class="hint">
         「推进时钟」发的是 <code>now_ms=9999999999999</code>（公元 2286 年），
         用来强行跑完跌倒 / 求助的升级链。闸门不会因此卡住 —— 见
         <code>tests/test_api.py::test_far_future_tick_does_not_wedge_the_gate</code>。
+      </p>
+    </section>
+
+    <!-- ==================== 路线可视化 ==================== -->
+    <section class="card">
+      <h2><span class="idx">④</span>路线可视化<small id="map-src">准备中…</small></h2>
+      <div class="map-stage">
+        <div id="map"></div>
+        <svg id="map-svg" hidden aria-label="路线示意图"></svg>
+        <p class="map-msg" id="map-msg">正在准备地图…</p>
+      </div>
+      <p class="hint">
+        底图来自百度 JSAPI GL（CDN 加载）。<b>断网或没配
+        <code>BAIDU_BROWSER_AK</code> 时退回无底图示意图</b>，几何仍然是真的。
+      </p>
+      <p class="hint">
+        起终点标记取自<b>路线几何本身</b>，不是上面的输入框 —— 输入框是 WGS-84
+        而百度返回的几何是 BD-09，实测能差一公里。那条<b>黄色虚线</b>就是把
+        这段偏差画出来，不假装它们是同一个坐标系。
       </p>
     </section>
   </div>
@@ -152,5 +190,8 @@
 </main>
 
 <script src="/static/app.js"></script>
+<!-- 路线可视化。★ 必须排在 app.js **之后**：app.js 加载时就会 connect()，
+     而 map.js 只注册 window.LingmouMap，等 ws 推来消息才动。 -->
+<script src="/static/map.js"></script>
 </body>
 </html>
