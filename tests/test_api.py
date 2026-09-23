@@ -3,6 +3,7 @@
 import base64
 import json
 import re
+from pathlib import PurePosixPath
 
 import pytest
 from starlette.testclient import TestClient
@@ -27,6 +28,17 @@ def client():
 def arb(client):
     """这个 app 实例自己的仲裁器。"""
     return client.app.state.arbiter
+
+
+def html_body(client) -> str:
+    """页面 HTML，**剥掉注释**。
+
+    ★ 为什么必须剥：测试里常要「数某种标签出现了几次」，而注释里提到
+      `<details>` / `<script>` 是常事（这些代码自己就反复提到）。不剥的话
+      计数会被说明文字带偏 —— 这个坑在本文件里踩过两次（数 <details>、
+      数 <script>），所以统一走这里。
+    """
+    return re.sub(r"<!--.*?-->", "", client.get("/").text, flags=re.S)
 
 
 # --------------------------------------------------------------------------
@@ -521,12 +533,19 @@ def test_map_panel_is_served(client):
 
 
 def test_homepage_includes_the_map_panel(client):
+    """地图面板必须在页面上，且 map.js 必须真的被加载。
+
+    ★ 2026-09-23 前端模块化之后，map.js 不再是独立的 <script> ——
+      它由 main.js import 进来（加载顺序交给模块图，不再依赖"谁写在前面"）。
+      所以这里断的是「被 main.js 引到」，而不是「页面里有那个标签」。
+    """
     html = client.get("/").text
-    assert "/static/map.js" in html
     assert 'id="map"' in html, "百度 JSAPI 需要这个容器"
     assert 'id="map-msg"' in html
-    # ★ 顺序要紧：map.js 只注册入口，app.js 加载时就 connect()，所以 map.js 在后
-    assert html.index("/static/app.js") < html.index("/static/map.js")
+
+    main = client.get("/static/js/main.js").text
+    assert 'from "../map.js"' in main, "map.js 必须被入口 import"
+    assert client.get("/static/map.js").status_code == 200, "map.js 要能被取到"
 
 
 
@@ -582,21 +601,25 @@ def test_emergency_is_dismissible_by_tapping_anywhere(client):
     pos = html.index('id="emg"')
     assert "任意位置" in html[pos:pos + 900], "紧急层必须写明「点任意位置也能关闭」"
 
-    js = client.get("/static/app.js").text
+    # ★ 2026-09-23 模块化后这段逻辑在 js/ui.js（产品界面），不在 app.js
+    js = client.get("/static/js/ui.js").text
     assert 'emg").onclick' in js, "遮罩本身必须绑关闭，否则只能点那个小按钮"
 
 
-def test_phone_feed_scrolls_internally(client):
-    """★ 手机视图的播报流是**定长 + 内滚**，不能无限撑长整页。
+def test_phone_feed_has_fixed_height_and_scrolls(client):
+    """★ 手机视图的播报流是**定长 + 内滚**。
 
-    放开内滚时，每 600ms 一条、只增不减的播报会把导航 / 地图 / 帧源
-    一路往下推 —— 想滚到那几张卡反而越来越难。这正是它被改回来的原因。
+    定长：播报每 600ms 一条、只增不减，框子跟着内容长会让人不断失去
+    位置感。（中间试过 34–56vh 的自适应区间，最后定回固定值 —— 可预期
+    比"刚好塞满"重要。）
+    内滚：超出就在框内滚；overscroll-behavior 防止滚到底把整页一起带走。
     """
     css = client.get("/static/app.css").text
     i = css.index(".phone .feed")
     block = css[i:i + css[i:].index("}")]
 
-    assert "max-height" in block, "播报流必须定长，否则整页会被越撑越长"
+    assert re.search(r"\bheight:\s*\d", block), \
+        "必须是固定高度（height），不能随内容长"
     assert "overflow-y: auto" in block, "播报流必须能上下滑动查看"
     assert "overscroll-behavior: contain" in block, "内滚到底不该把整页也带着滚"
 
@@ -629,10 +652,8 @@ def test_map_fold_does_not_use_details_tag(client):
     html = client.get("/").text
     assert 'data-fold' in html, "折叠开关要有 data-fold（app.js 靠它绑事件）"
 
-    # 地图不能在未闭合的 <details> 里。
-    # ★ 先剥掉注释再数：注释里提到 `<details>` 是常事（这段代码自己就提了
-    #   两次），不剥的话计数会被自己的说明文字带偏 —— 第一版就栽在这。
-    body = re.sub(r"<!--.*?-->", "", html, flags=re.S)
+    # 地图不能在未闭合的 <details> 里（剥注释，见 html_body 的说明）
+    body = html_body(client)
     before = body[:body.index('id="map"')]
     assert before.count("<details") == before.count("</details>"), \
         "地图不能在 <details> 里 —— display:none 会让 GL 静默不渲染"
@@ -644,3 +665,110 @@ def test_map_fold_does_not_use_details_tag(client):
         "折叠要用 max-height + overflow，不能 display:none"
     # 展开后要能容下地图（220px）+ 说明文字
     assert "max-height: 0" in blk, "默认应该是收起的"
+
+
+def test_sos_buttons_live_in_the_top_dock(client):
+    """★ 一键求助 / 取消求助 在**顶部常驻区**（2026-09-23 要求「一直都在最顶端」）。
+
+    从底部栏挪上来的。同时钉住 `.topdock` 统一 sticky：品牌栏和操作条
+    各自 `top: 0` 会同时贴住视口顶部、滚动时互相盖住。
+    """
+    html = client.get("/").text
+    phone, dock = html.index('id="app"'), html.index('class="topdock"')
+    feed = html.index('class="card feed-card"')
+    sos, cancel = (html.index('data-route="/v1/emergency/sos"'),
+                   html.index('data-route="/v1/emergency/cancel"'))
+
+    assert phone < dock < feed, "顶部常驻区要在播报流之前"
+    for name, pos in (("一键求助", sos), ("取消求助", cancel)):
+        assert dock < pos < feed, f"{name} 要在顶部常驻区里"
+
+    css = client.get("/static/app.css").text
+    blk = css[css.index(".topdock {"):]
+    blk = blk[:blk.index("}")]
+    assert "sticky" in blk, ".topdock 必须 sticky（常驻）"
+    assert ".topdock .topbar { position: static; }" in css, \
+        "里面的 .topbar 要改 static，否则两个 sticky 互相盖住"
+
+
+# --------------------------------------------------------------------------
+# 前端模块化（2026-09-23）—— 下面两条是这次重构真正的安全网
+# --------------------------------------------------------------------------
+
+JS_FILES = ["/static/js/dom.js", "/static/js/state.js", "/static/js/log.js",
+            "/static/js/net.js", "/static/js/ui.js", "/static/js/dev.js",
+            "/static/js/main.js", "/static/map.js"]
+
+
+def test_every_id_the_js_reaches_for_exists_in_the_html(client):
+    """★ JS 引用的每个 id 都必须在页面上存在。
+
+    这是前端拆模块之后最要紧的一条：所有模块一律按 id 取 DOM，重构时把
+    一个 `$("xxx")` 搬到了别的文件、而那个元素根本不在页面上 ——
+    **只有真去点那个按钮才会报错**，而单元测试看不见。
+    反向同理：元素被删了而 JS 还在取，也是这里先报。
+
+    静态检查替代不了浏览器，但这一类断裂它能全部拦住。
+    """
+    ids = set(re.findall(r'id="([^"]+)"', client.get("/").text))
+
+    missing = {}
+    for path in JS_FILES:
+        src = client.get(path).text
+        refs = set(re.findall(r'\$\("([^"]+)"\)', src))
+        refs |= set(re.findall(r'getElementById\("([^"]+)"\)', src))
+        gap = sorted(r for r in refs if r not in ids)
+        if gap:
+            missing[path] = gap
+
+    assert not missing, f"JS 引用了页面上不存在的 id：{missing}"
+
+
+def _resolve_module(base_dir: str, spec: str) -> str:
+    """把模块里的相对 specifier 解析成**浏览器会请求的那个绝对路径**。
+
+    ★ 必须自己折叠 `..`：`pathlib` **不**折叠（文档明说），而浏览器会。
+      不折叠的话测试请求的是 `/static/js/../map.js` —— 服务端把它规范化
+      成 `/static/map.js`，于是照样 200；而浏览器请求的是 `/static/map.js`。
+      两者恰好一致时测试绿，一旦服务端不再规范化就变成**假绿**，而真实
+      浏览器已经 404 了。
+    """
+    parts = [p for p in base_dir.split("/") if p]
+    for seg in spec.split("/"):
+        if seg == "..":
+            if parts:
+                parts.pop()
+        elif seg not in ("", "."):
+            parts.append(seg)
+    return "/" + "/".join(parts)
+
+
+def test_every_module_import_resolves(client):
+    """模块 import 的路径都要真的取得到 —— 拼错在浏览器里是**静默失败**：
+    整页 JS 不执行，而控制台之外看不出任何异常。"""
+    for page in ("/static/js/main.js", "/static/js/dev.js", "/static/map.js"):
+        base_dir = str(PurePosixPath(page).parent)
+        for m in re.findall(r'from "(\.{1,2}/[^"]+)"', client.get(page).text):
+            url = _resolve_module(base_dir, m)
+            assert client.get(url).status_code == 200, f"{page} → {m}（{url}）取不到"
+
+
+def test_module_resolver_collapses_dotdot():
+    """给上面那个解析器本身一条用例 —— 它是测试的测试，错了会集体假绿。"""
+    assert _resolve_module("/static/js", "../map.js") == "/static/map.js"
+    assert _resolve_module("/static/js", "./net.js") == "/static/js/net.js"
+    assert _resolve_module("/static", "./js/dom.js") == "/static/js/dom.js"
+    assert _resolve_module("/static/js", "../../x.js") == "/x.js"
+
+
+def test_only_one_script_tag_and_it_is_a_module(client):
+    """★ 页面只该有一个 <script>，且必须是 ES module。
+
+    拆模块之前是两个普通脚本，靠「谁写在前面」定顺序；现在顺序交给模块图，
+    多一个普通 <script> 或漏掉 type="module" 都会让 import 语法直接报错。
+    """
+    html = html_body(client)          # 剥注释，否则注释里提到的 <script> 会被算进来
+    tags = re.findall(r"<script[^>]*>", html)
+    assert len(tags) == 1, f"只该有一个 script 标签，实际 {tags}"
+    assert 'type="module"' in tags[0], "必须是 module"
+    assert "/static/js/main.js" in tags[0], "入口应是 js/main.js"

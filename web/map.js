@@ -3,11 +3,11 @@
  * ## 三件事决定了它长这样
  *
  * **一、数据从 WebSocket 的 navigation 播报里取。**
- *   与 `app.js` 开头那条架构约定一致（「所有播报都从 WebSocket 进来」）。
+ *   与 `js/ui.js` 开头那条架构约定一致（「所有播报都从 WebSocket 进来」）。
  *   但挂点**不能是 `receive()`** —— `receive()` 在「暂停」时直接入队就返回，
  *   恢复时走的是 `paint()`，会绕过 `receive`。挂在 `receive` 上会让
  *   **暂停期间到达的路线永远画不出来**，而「暂停」正是调试台最常点的按钮。
- *   所以挂在 `ws.onmessage` 那一层（见 `app.js` 的同名注释）。
+ *   所以挂在 `ws.onmessage` 那一层（见 `js/main.js` 的同名注释）。
  *
  * **二、底图会加载失败，失败必须落在卡片里。**
  *   百度 JSAPI GL 是从 CDN 拉的，断网、没配 AK、AK 没开对应服务都会失败。
@@ -36,7 +36,9 @@
  *   输入框与路线起点的偏差用一条**虚线**画出来 —— 不假装它们是同一个坐标系。
  */
 
-(() => {
+import { readGeo } from "./js/dom.js";
+
+const LingmouMap = (() => {
   "use strict";
 
   const $ = (id) => document.getElementById(id);
@@ -92,7 +94,7 @@
 
   function showMessage(text, { caption = false } = {}) {
     if (!MSG) return;
-    MSG.textContent = text;   // 刻意用 textContent：与 app.js 一样不碰 innerHTML
+    MSG.textContent = text;   // 刻意用 textContent：与其它模块一样不碰 innerHTML
     MSG.classList.toggle("caption", caption);
     MSG.hidden = false;
   }
@@ -342,13 +344,11 @@
 
   /** 读输入框里的起点（WGS-84）。只用来画那条提示偏差的虚线。
    *
-   * ★ 复用 `app.js` 的 `readGeo()`，**不另写一份**。两边各写一份读同一组
+   * ★ 复用 `js/dom.js` 的 `readGeo()`，**不另写一份**。两边各写一份读同一组
    *   输入框的代码，等于把「字段 id 叫什么、怎么算合法」这个约定复制成两份 ——
    *   哪天改了一处，另一处会静默地读错，而那条虚线会指向错的地方。
-   *   （app.js 是普通脚本，顶层函数就是全局的；map.js 排在它后面加载。）
    */
   function readBoxOrigin() {
-    if (typeof readGeo !== "function") return null;
     return readGeo("geo");
   }
 
@@ -406,7 +406,7 @@
   }
 
   // ====================================================================
-  // 对外入口 —— 由 app.js 的 ws.onmessage 调用
+  // 对外入口 —— 由 js/main.js 的 ws.onmessage 调用
   // ====================================================================
 
   function onAnnouncement(a) {
@@ -472,7 +472,7 @@
     try { window.dispatchEvent(new Event("resize")); } catch (e) { /* 忽略 */ }
   }
 
-  window.LingmouMap = { onAnnouncement, refresh };
+  return { onAnnouncement, refresh };
 
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", init);
@@ -480,3 +480,5 @@
     init();
   }
 })();
+
+export default LingmouMap;

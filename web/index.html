@@ -21,24 +21,32 @@
   ★ 隐藏 ≠ 删除：测试件仍然在 DOM 里。`app.js` / `map.js` 一律按 id 取用，
     元素真的被删掉会当场报错。所以是 `hidden`，翻出来就能继续验证契约。
 
-  四个文件而不是一个：
-    index.html   结构
-    app.css      样式（含深色主题的全部取值）
-    app.js       逻辑（含帧源、WS、渲染）
-    map.js       路线可视化（★ 唯一一处外部运行时：百度 JSAPI GL，从 CDN 拉。
-                 加载失败会退回纯 SVG 示意图，且**失败只落在卡片内**，
-                 不影响播报流与请求日志）
+  文件分工（逻辑按「产品 / 调试」这条界线拆，与页面两层一一对应）：
+    index.html     结构
+    app.css        样式（含深色主题的全部取值）
+    js/main.js     入口装配
+    js/ui.js       ★ 产品界面：播报流 / 紧急全屏 / 提示 / 语音 / 筛选暂停清空
+    js/dev.js      ★ 调试件：面板开关 / 帧源 / 单图 / 其余路由 / 健康
+    js/net.js      传输：POST /v1/frame、WS /v1/stream、其余 POST 路由
+    js/state.js    共享状态（单一真源）
+    js/log.js      请求日志（产品逻辑也要记，故独立成文件）
+    js/dom.js      $ 与常量
+    map.js         路线可视化（★ 唯一一处外部运行时：百度 JSAPI GL，从 CDN 拉。
+                   加载失败会退回纯 SVG 示意图，且**失败只落在卡片内**，
+                   不影响播报流与请求日志。保持独立脚本，未并入模块）
 
   ★ map.js 是这套代码里唯一依赖第三方运行时的地方。它必须满足两条：
     ① 失败可见且局限在自己的卡片里（不碰 window.onerror、不进请求日志）；
     ② 没有它时整个页面照常工作。
 
-  ★ 关于 extra.index：两个 mock（MockVLM / MockDetector）都靠 index % 3
-    轮换场景。所以这里必须发**递增**的序号 —— 固定 index 会让仲裁器把
-    后续全部当重复丢掉，页面上只会看到一条。
+  ★ 关于 extra.index：两个 mock（MockVLM / MockDetector）都靠
+    `index % len(场景表)` 轮换场景（2026-09-23 由 3 个扩到 6 个）。
+    所以这里必须发**递增**的序号 —— 固定 index 会让闸门把后续全部当
+    重复丢掉，页面上只会看到一条。
 
-  手机视图里没有任何帧源，帧源在开发者面板（视频抽帧 / 摄像头 / 单张图片），
-  它们共用同一个上传接口 POST /v1/frame（multipart）。
+  帧源：手机视图顶部有一条固定宽度的视频条（要用，播报才有内容）；
+  开发者面板里另有摄像头占位与单张图片。它们共用同一个上传接口
+  POST /v1/frame（multipart）。
 -->
 </head>
 <body>
@@ -49,6 +57,9 @@
      ================================================================ -->
 <div class="phone" id="app">
 
+  <!-- 顶部常驻区：品牌栏 + 安全操作条一起 sticky。
+       ★ 不能各自 sticky top:0 —— 两个都会贴住视口顶部，滚动时互相盖住。 -->
+  <div class="topdock">
   <header class="topbar">
     <div class="brand">
       <svg class="mark" viewBox="0 0 32 32" aria-hidden="true">
@@ -75,6 +86,19 @@
       </button>
     </div>
   </header>
+
+  <!-- 安全操作条 —— 常驻顶部（2026-09-23，从底部栏挪上来）。
+       ★ 要求是「一直都在最顶端」，所以放进 .topdock 跟品牌栏一起 sticky。
+       ★ 一句提醒：顶部是单手最难够到的位置。真机单手操作时拇指够不到，
+         如果实际用起来觉得别扭，把这两个按钮放回 .tabbar 即可 ——
+         结构、data-route、文案都不用改，只是挪个位置。 -->
+  <div class="sosbar">
+    <button class="btn sos" data-route="/v1/emergency/sos"
+            data-body='{"extra":{"index":1,"kind":"sos"}}'>一键求助</button>
+    <button class="btn ghost" data-route="/v1/emergency/cancel"
+            data-body='{"extra":{"kind":"cancel"}}'>取消求助</button>
+  </div>
+  </div>
 
   <div class="screen">
 
@@ -187,15 +211,14 @@
   </div>
 
   <!-- ---------------- 底部操作栏 ---------------- -->
+  <!-- 底部栏只留「播报」开关（2026-09-23）。
+       两个求助按钮已挪到顶部 .sosbar —— 它们要「一直都在最顶端」。
+       播报开关留在这里是因为它是最常用的开关，拇指位最省力。 -->
   <nav class="tabbar" aria-label="常用操作">
     <button class="btn ghost tab" id="ttsBtn" aria-pressed="true" title="用浏览器 TTS 念出播报">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 5 6.5 9H3v6h3.5L11 19zM15.5 8.5a5 5 0 0 1 0 7" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
       <span id="ttsTxt">播报：开</span>
     </button>
-    <button class="btn sos" data-route="/v1/emergency/sos"
-            data-body='{"extra":{"index":1,"kind":"sos"}}'>一键求助</button>
-    <button class="btn ghost tab" data-route="/v1/emergency/cancel"
-            data-body='{"extra":{"kind":"cancel"}}'>取消求助</button>
   </nav>
 </div>
 
@@ -245,7 +268,7 @@
         </p>
         <div class="row">
           <label class="field">感知<input type="number" id="perMs" value="2000" min="200" step="100"><span>ms</span></label>
-          <label class="field">安全<input type="number" id="safMs" value="600" min="100" step="100"><span>ms</span></label>
+          <label class="field">安全<input type="number" id="safMs" value="1500" min="100" step="100"><span>ms</span></label>
         </div>
         <p class="hint">
           两条流水线<b>各自独立发包</b>：感知走云端 VLM（1–3 秒），安全走轻量检测（&lt;200ms）
@@ -313,9 +336,13 @@
 
 <div class="toast" id="toast" hidden></div>
 
-<script src="/static/app.js"></script>
-<!-- 路线可视化。★ 必须排在 app.js **之后**：app.js 加载时就会 connect()，
-     而 map.js 只注册 window.LingmouMap，等 ws 推来消息才动。 -->
-<script src="/static/map.js"></script>
+<!-- 入口。原生 ES modules，零构建 —— 仍是"直接打开就能跑"。
+     分模块的原因见 web/js/main.js 的头注释：按 index.html 已经划好的
+     「产品 / 调试」界线拆，改一处不必翻遍整个文件。
+
+     ★ 只需要这一个 <script>：map.js 也是模块，由 main.js import 进来，
+       加载顺序交给模块图，不再依赖「谁写在前面」。
+       （map.js 仍是唯一依赖第三方运行时的文件，且自带无底图降级。） -->
+<script type="module" src="/static/js/main.js"></script>
 </body>
 </html>

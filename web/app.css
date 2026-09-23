@@ -435,6 +435,23 @@ video { display: block; width: 100%; }
   max-width: 560px; margin: 0 auto;
 }
 
+/* 顶部常驻区（品牌栏 + 安全操作条）。
+   ★ 用一个包裹层统一 sticky：两个元素各自 `top: 0` 会同时贴住视口顶部、
+     滚动时互相盖住。包裹后里面的 .topbar 改回 static。 */
+.topdock { position: sticky; top: 0; z-index: 40; }
+.topdock .topbar { position: static; }
+
+/* 安全操作条 —— 常驻顶部（2026-09-23，从底部栏挪上来）。
+   .btn.sos 的红色渐变与尺寸沿用原样式，所以求助依然是最大的那个。 */
+.sosbar {
+  display: flex; align-items: stretch; gap: 8px;
+  padding: 8px 14px;
+  background: rgba(7, 9, 14, .92);
+  backdrop-filter: blur(14px) saturate(150%);
+  border-bottom: 1px solid var(--line);
+}
+.sosbar .btn { min-height: 46px; }
+
 /* 刘海/挖孔屏：顶部和底部各让出安全区，别让内容压在系统 UI 底下 */
 .phone .topbar { padding: calc(10px + env(safe-area-inset-top)) 14px 10px; }
 .phone .screen {
@@ -454,11 +471,11 @@ video { display: block; width: 100%; }
    `overscroll-behavior: contain` 正面解决原作者担心的滚动手势串台：
    在播报流里滚到底，不会再把整页带着一起滚。 */
 .phone .feed {
-  /* ★ 吃掉剩余空间而不是写死一个高度（2026-09-23）。
-     写死会出现两种难看：屏大时下面留一大块空白，屏小时又不够看。
-     所以给区间而不是定值 —— 下限保证能同时看到几条，上限保证
-     导航卡与底部按钮不被顶出屏幕。地图收起后腾出的空间正好给它。 */
-  flex: 1 1 auto; min-height: 34vh; max-height: 56vh;
+  /* ★ 高度**固定**，不随内容变化（2026-09-23 定稿）。
+     先前试过给区间（34–56vh 自适应），但播报每 600ms 一条、只增不减，
+     框子跟着长会让人不断失去位置感 —— 固定长度可预期得多。
+     内容超出就在框内滚（overscroll-behavior 见下）。 */
+  height: 46vh;
   overflow-y: auto; padding-right: 4px;
   overscroll-behavior: contain;
 }

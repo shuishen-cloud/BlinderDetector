@@ -14,7 +14,8 @@ from pathlib import Path
 #: 仓库根目录。
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-#: 前端调试台：`index.html` + `app.css` + `app.js` + `map.js`（路线可视化）。
+#: 前端调试台：`index.html` + `app.css` + `js/`（模块化的逻辑）
+#: + `map.js`（路线可视化）。逻辑按「产品 / 调试」分模块，见 web/js/main.js。
 WEB_DIR = BASE_DIR / "web"
 
 #: 测试素材（demo.mp4 / frames）。`GET /data/*` 挂的就是它。
