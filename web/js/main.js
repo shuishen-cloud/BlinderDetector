@@ -22,6 +22,7 @@ import { connectStream } from "./net.js";
 import { log } from "./log.js";
 import { receive, initUI, localNote } from "./ui.js";
 import { initDev, setDev, devFromUrl } from "./dev.js";
+import { initVoiceInput } from "./voice.js";
 import { $ } from "./dom.js";
 import LingmouMap from "../map.js";
 import { count as countIncident, initIncidents } from "./incidents.js";
@@ -29,6 +30,8 @@ import { count as countIncident, initIncidents } from "./incidents.js";
 initUI();
 initDev();
 initIncidents();
+// ★ 语音输入（按住说话）—— 产品功能，所以和 initUI 一起，不在 initDev 里。
+initVoiceInput();
 // ★ 地图的启动**显式放在这里**，而不是藏在 map.js 的 IIFE 里自启 ——
 //   原先那样写，一个 `return` 就能把它变成死代码，而且**静默**：
 //   不报错，只是地图永远不出现。改成显式调用之后，启动顺序在这一处看得全，

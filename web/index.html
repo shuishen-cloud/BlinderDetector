@@ -123,6 +123,18 @@
         <label class="sr" for="dest">目的地</label>
         <input type="text" id="dest" value="太原站" placeholder="要去哪儿" enterkeyhint="go" autocomplete="off">
       </div>
+      <!-- ★ 按住说话 —— 目的地那一格的主要输入方式。
+           看不见屏幕的人打字要多难受有多难受：先调出屏幕键盘，再在一个看不见的
+           输入框里逐字确认。按住 / 松开这套，状态就长在手指上，不存在「忘了关」。
+           ★ 它是**长按**，不是点击：pointerdown 起、pointerup 停，
+             所以 CSS 里必须 touch-action: none（否则长按会变成滚动或选中）。
+           ★ 松开之后文本落进上面那个 #dest —— 和打字同一个落点，后面的路一步没变。 -->
+      <div class="row">
+        <button class="btn hold wide" id="talkBtn" type="button" aria-label="按住说话">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5a3 3 0 0 1 3 3v5a3 3 0 0 1-6 0v-5a3 3 0 0 1 3-3zM6.5 11.5a5.5 5.5 0 0 0 11 0M12 17v3.5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+          <span id="talkTxt">按住说话</span>
+        </button>
+      </div>
       <div class="row">
         <button class="btn primary wide" data-route="/v1/navigation/route"
                 data-dest="1" data-geo="1">

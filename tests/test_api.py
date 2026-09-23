@@ -906,6 +906,101 @@ def test_sound_switch_carries_three_redundant_cues(client):
 # --------------------------------------------------------------------------
 
 
+# --------------------------------------------------------------------------
+# 语音输入（目的地那一格，2026-09-23）
+# --------------------------------------------------------------------------
+
+
+def test_voice_button_is_hold_to_talk_not_a_click(client):
+    """★ 目的地那一格是**按住说话**，不是点一下。
+
+    两个理由：
+      · 用户看不见屏幕 —— 「现在是在录、还是已经停了」这件事必须由手指本身
+        回答；点一下开始/再点一下结束要求用户用耳朵记住当前状态，而按住说话
+        的物理状态就是状态，还不存在「忘了关」。
+      · 长按在浏览器里默认是「选中文字 / 滚动 / 弹系统菜单」，会把 pointerup
+        吃掉、交互直接废掉 —— 所以 CSS 里 `touch-action: none` 是**功能前提**，
+        不是样式偏好。这条最容易在重构时被当装饰删掉，所以钉住它。
+    """
+    html = html_body(client)
+    app = html.index('id="app"')
+    assert html.index('id="talkBtn"') > app, "按住说话是产品功能，要在手机视图里"
+    assert 'id="talkTxt"' in html, "按钮上的字要能随状态换（正在听 / 识别中）"
+
+    js = client.get("/static/js/voice.js").text
+    assert 'addEventListener("pointerdown"' in js, "起录靠 pointerdown"
+    assert 'addEventListener("pointerup"' in js, "停录靠 pointerup —— 不是 click"
+    assert "setPointerCapture" in js, \
+        "要捕获指针：按住后滑出按钮再松开，也必须算松开，否则按钮卡在「正在听…」"
+
+    css = client.get("/static/app.css").text
+    hold = css[css.index(".phone .btn.hold"):]
+    hold = hold[:hold.index("}")]
+    assert "touch-action: none" in hold, "长按必须先关掉浏览器手势，否则 pointerup 收不到"
+    assert "user-select: none" in hold, "长按选中会在按钮上糊一层蓝"
+
+
+def test_voice_hands_the_text_to_the_existing_nav_path(client):
+    """★ 松开之后**不许新增请求路径** —— 文本落进 `#dest`，再按下那个既有按钮。
+
+    起因：目的地是这一页唯一要用户输入文字的地方，语音只是换掉「怎么把字填
+    进去」。路由、坐标、错误处理全在既有的 `data-dest` 按钮里（dev.js）。
+    在这里再写一份 fetch 就等于把那条路复制成两份，改一处另一处会**静默**
+    不一致 —— 这个项目刚在 `.video-strip` 上栽过同类跟头。
+
+    ★ 先报「听到了什么」再出发：识别错了的话，用户此刻就能开口纠正，而不是
+      等路线播报出来才发现去的是别的地方。
+    """
+    js = client.get("/static/js/voice.js").text
+
+    assert '$("dest").value = text' in js, "识别结果要落进原来那个输入框"
+    assert 'querySelector("button[data-dest]")' in js, "要按下既有的导航按钮，而不是自己发请求"
+    assert ".click()" in js
+    assert "fetch(" not in js and "postJson" not in js, \
+        "语音这一层不许自己发请求 —— 那条路只该有一份"
+    assert "目的地：" in js, "要先把听到的内容念一遍再出发"
+
+    # 顺序：写入 →（念一遍）→ 出发
+    write = js.index('$("dest").value = text')
+    speak_at = js.index("speak(`目的地：")
+    click_at = js.index("go.click()")
+    assert write < speak_at < click_at, "顺序必须是「落进输入框 → 报一遍 → 出发」"
+
+
+def test_voice_input_says_so_when_it_cannot_work(client):
+    """★ 用不了就说用不了，且不能把按钮卡在「正在听…」。
+
+    两件在别处都吃过亏的事：
+      · **假绿**：浏览器没有语音识别（Firefox 至今没有）时，按钮不能照常
+        显示「按住说话」—— 用户会对着它按半天，然后以为是自己没说清楚。
+        所以直接写「语音不可用」，点一下给出原因。
+      · **卡住**：`onend` 一定会来（成功 / 没说话 / 被打断都来），它是**唯一**
+        的收尾点。少了它，一次「按了没说话」就能让按钮永远停在「正在听…」，
+        而用户以为系统还在录。
+    """
+    js = client.get("/static/js/voice.js").text
+
+    assert "SpeechRecognition" in js and "webkitSpeechRecognition" in js, \
+        "前缀版也要认（Safari / 旧 Chrome）"
+    assert 'dead: "语音不可用"' in js, "不支持时按钮要直接写实话"
+    assert "whyUnavailable" in js and "HTTPS" in js, \
+        "要说出原因（Firefox 没有 / 需要 HTTPS 或 localhost），不能只说「不支持」"
+    assert "r.onend" in js, "onend 是唯一的收尾点，少了它按钮会卡在「正在听…」"
+    assert re.search(r"const missed = listening && !heard", js), \
+        "松手后仍没结果 = 没听清，要如实说，不能安静地回到初始态"
+    # ★ 2026-09-23 实测补的一条：收尾**不能只靠 onend**。规范说 onerror 之后
+    #   也会派发 onend，但用桩引擎跑下来，只要引擎少发一次 onend，按钮就永远
+    #   停在「识别中…」。所以 onerror 里也要收尾（再来一次 onend 是幂等的）。
+    err_at = js.index("r.onerror = (ev) => {")
+    assert "finish();" in js[err_at:err_at + 900], \
+        "onerror 必须自己收尾，不能赌引擎还会发 onend"
+
+    html = html_body(client)
+    assert "按住说话" in html
+    css = client.get("/static/app.css").text
+    assert ".phone .btn.hold.listening" in css, "「正在听」要有自己的样子（配合震动与语音）"
+
+
 def test_speech_queue_never_lets_the_ear_fall_behind(client):
     """★ 端侧必须做**抢占**和**积压保护** —— 这是 design.md D11 划过来的活。
 
@@ -1120,7 +1215,7 @@ def test_status_pills_name_themselves_for_screen_readers(client):
 #: 而放它过等于把这条安全网拆掉。
 PAGE_JS = {
     "/": ["/static/js/dom.js", "/static/js/state.js", "/static/js/log.js",
-          "/static/js/speech.js",
+          "/static/js/speech.js", "/static/js/voice.js",
           "/static/js/net.js", "/static/js/ui.js", "/static/js/dev.js",
           "/static/js/main.js", "/static/map.js"],
     "/static/sender.html": ["/static/js/sender.js", "/static/js/dom.js",

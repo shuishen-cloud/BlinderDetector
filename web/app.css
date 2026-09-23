@@ -657,6 +657,26 @@ video { display: block; width: 100%; }
 .phone input[type=text] { min-height: 42px; font-size: 15px; }
 .phone input[type=number] { min-height: 40px; font-size: 15px; }
 
+/* ★ 按住说话（目的地那一格）。
+   `touch-action: none` 是**功能前提**而不是样式：不关掉浏览器的手势，
+   长按会变成「选中文字」或「滚动页面」，松开时 pointerup 收不到，
+   整个交互就废了。`user-select: none` 同理 —— 长按选中会在按钮上糊一层蓝。 */
+.phone .btn.hold {
+  touch-action: none;
+  user-select: none; -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  min-height: 52px;
+  gap: 9px;
+}
+/* 「正在听」用强调蓝而不是红色：这个界面里红色=危险/求助，
+   录音状态借走它，会让「一键求助」那块红色的含义变模糊。 */
+.phone .btn.hold.listening {
+  color: #fff; border-color: rgba(91, 157, 255, .65); background: rgba(91, 157, 255, .22);
+  animation: listen-pulse 1.3s ease-in-out infinite;
+}
+@keyframes listen-pulse { 50% { box-shadow: 0 0 0 7px rgba(91, 157, 255, .12); } }
+.phone .btn.hold.dead { color: var(--bad); border-color: rgba(251, 113, 133, .5); }
+
 .btn.wide { flex: 1; min-height: 46px; font-size: 15.5px; font-weight: 600; }
 .btn.icon { padding: 6px; min-width: 36px; }
 
