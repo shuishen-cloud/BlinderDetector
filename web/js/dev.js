@@ -12,7 +12,7 @@ import { $, readGeo } from "./dom.js";
 import { state, stats } from "./state.js";
 import { log } from "./log.js";
 import { sendFrame, postJson, fetchHealth } from "./net.js";
-import { toast } from "./ui.js";
+import { toast, speak, haptic } from "./ui.js";
 import LingmouMap from "../map.js";
 
 // =====================================================================
@@ -144,6 +144,18 @@ function routeToast(path, g) {
   return g.produced ? `已发送，放行 ${g.passed} 条` : "已发送（被闸门丢弃）";
 }
 
+/** 动作确认 —— 三通道一起给，因为**这一层不能假设用户在看屏幕**。
+ *
+ *   眼睛（陪同者）—— toast
+ *   耳朵（用户）  —— TTS 念一遍结果，否则按了「一键求助」也不知道按上没有
+ *   手            —— 震一下；关了播报开关时，这是唯一的反馈
+ */
+function confirmAction(msg, kind = "") {
+  toast(msg, kind);
+  speak(msg);
+  haptic("short");
+}
+
 function bindRouteButtons() {
   document.querySelectorAll("button[data-route]").forEach((btn) => {
     btn.onclick = async () => {
@@ -168,10 +180,10 @@ function bindRouteButtons() {
         const g = await postJson(path, body);
         log(`POST ${path} → 产出 ${g.produced} 条，放行 ${g.passed} 条`,
             g.produced ? "ok" : "dim");
-        toast(routeToast(path, g), g.produced ? "ok" : "");
+        confirmAction(routeToast(path, g), g.produced ? "ok" : "");
       } catch (e) {
         log(`POST ${path} 失败：${e.message}`, "err");
-        toast(`发送失败：${e.message}`, "err");
+        confirmAction(`发送失败：${e.message}`, "err");
       }
     };
   });
@@ -184,7 +196,7 @@ function bindGeoButton() {
     const reset = () => { btn.disabled = false; btn.textContent = "用当前位置"; };
 
     if (!navigator.geolocation) {
-      toast("这个浏览器不提供定位", "err");
+      confirmAction("这个浏览器不提供定位", "err");
       return;
     }
     btn.disabled = true;
@@ -198,12 +210,12 @@ function bindGeoButton() {
         $("geo-lng").value = pos.coords.longitude.toFixed(6);
         const adv = $("geo-lat").closest("details");
         if (adv) adv.open = true;          // 展开，让改动看得见
-        toast(`起点已换成当前位置（精度约 ${Math.round(pos.coords.accuracy)} 米）`, "ok");
+        confirmAction(`起点已换成当前位置（精度约 ${Math.round(pos.coords.accuracy)} 米）`, "ok");
         reset();
       },
       (err) => {
         // 定位只在 https 或 localhost 下可用 —— 局域网 IP 直连会被浏览器拒绝。
-        toast(`定位失败：${err.message || err.code}（需要 HTTPS 或 localhost）`, "err");
+        confirmAction(`定位失败：${err.message || err.code}（需要 HTTPS 或 localhost）`, "err");
         reset();
       },
       { enableHighAccuracy: true, timeout: 8000, maximumAge: 0 },

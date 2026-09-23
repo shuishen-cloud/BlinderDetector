@@ -19,9 +19,11 @@ import { receive, initUI } from "./ui.js";
 import { initDev, setDev, devFromUrl } from "./dev.js";
 import { $ } from "./dom.js";
 import LingmouMap from "../map.js";
+import { count as countIncident, initIncidents } from "./incidents.js";
 
 initUI();
 initDev();
+initIncidents();
 
 // 先定视图再做别的 —— 免得新播报到达时版面在跳
 setDev(devFromUrl());
@@ -33,6 +35,9 @@ connectStream({
     $("wsTxt").textContent = ok ? "已连接" : "断开，重连中…";
   },
   onAnnouncement: (a) => {
+    // 意外统计**先于** receive()：receive 在「暂停」时直接入队就返回，
+    // 而暂停只是「别往墙上贴」—— 出过的事照样要记进统计。
+    countIncident(a);
     receive(a);
     // 路线可视化面板（web/map.js，可选加载）。
     //

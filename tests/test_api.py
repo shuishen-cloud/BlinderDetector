@@ -3,6 +3,7 @@
 import base64
 import json
 import re
+from collections import Counter
 from pathlib import PurePosixPath
 
 import pytest
@@ -772,3 +773,77 @@ def test_only_one_script_tag_and_it_is_a_module(client):
     assert len(tags) == 1, f"只该有一个 script 标签，实际 {tags}"
     assert 'type="module"' in tags[0], "必须是 module"
     assert "/static/js/main.js" in tags[0], "入口应是 js/main.js"
+
+
+def test_only_emergency_announcements_take_over_the_screen(client):
+    """★ 视觉全屏只留给需要用户**动作**的播报（跌倒二次确认 / 求助）。
+
+    安全层的危险障碍物不抢屏。按盲人使用逻辑：
+      · 全屏遮罩对看不到屏幕的人毫无作用 —— 信息全在耳朵和震动里；
+      · 它唯一的作用是给陪同者看，而实测 36 秒弹 8 次（全是自行车/来车），
+        屏幕几乎一直被红色盖着，反而把陪同者要看的信息挡掉。
+    危险障碍物靠 TTS + haptic=double 就够了。
+
+    钉的是 ui.js 的 receive()：`emergency(...)` 必须由 source 判断守着，
+    不能退回「priority>=3 一律全屏」。
+    """
+    js = client.get("/static/js/ui.js").text
+    i = js.index("export function receive(")
+    body = js[i:js.index("\n}\n", i)]
+
+    assert "SOURCE_EMERGENCY" in body, "全屏必须按 source 收窄，不能只看 priority"
+    assert body.count("emergency(") == 1, "全屏只该有一个入口"
+    # 优先级统计与「抢屏」是两件事，别被合并回去
+    assert "bump(\"critical\")" in body, "统计仍按 priority>=3，不该跟着收窄"
+
+
+def test_action_results_are_audible_not_only_visible(client):
+    """★ 动作结果不能只给 toast —— 那是视觉的，盲人用户看不到。
+
+    按「一键求助」只弹一个视觉提示，用户不知道自己按上没有。
+    所以走三条通道：toast（陪同者）+ TTS（用户）+ haptic（关播报时兜底）。
+    """
+    js = client.get("/static/js/dev.js").text
+    assert "function confirmAction(" in js, "要有统一的动作确认入口"
+    i = js.index("function confirmAction(")
+    body = js[i:js.index("\n}\n", i)]
+    for ch in ("toast(", "speak(", "haptic("):
+        assert ch in body, f"动作确认缺 {ch} 这条通道"
+    assert "toast(routeToast(" not in js, "路由按钮不该退回只弹 toast"
+
+
+def test_html_ids_are_unique(client):
+    """★ id 必须唯一 —— 重复 id 会让 `getElementById` 只返回**第一个**，
+    另一个元素从此静默地永远不更新（不报错，只是不动）。
+
+    加这条的起因：给地图加折叠区时把 `id="map-src"` 复制了一份，于是
+    导航卡标题和折叠区各有一个 —— map.js 只更新得到前一个。**已有的
+    「JS 引用的 id 是否存在」那条查不出来**，因为两个都存在。
+    """
+    ids = re.findall(r'id="([^"]+)"', html_body(client))
+    dup = {k: v for k, v in Counter(ids).items() if v > 1}
+    assert not dup, f"id 重复：{dup}"
+
+
+def test_incident_stats_are_wired(client):
+    """意外统计必须真的接进了播报流，且判据取自 detail。
+
+    统计口径跟后端契约同源（emergency 的 state / safety 的 risk），
+    所以后端改措辞不会让数字失真。
+    """
+    js = client.get("/static/js/incidents.js").text
+    # 判据来自契约字段，不是措辞
+    for field in ("d.state", "d.escalation_step", "d.risk"):
+        assert field in js, f"统计判据应取自 detail 的 {field}"
+    for state in ("suspected", "confirmed", "cancelled", "notifying"):
+        assert state in js, f"漏了 {state} 这一态"
+
+    html = client.get("/").text
+    for el in ("incAccidents", "incWarnings", "incReset"):
+        assert f'id="{el}"' in html, f"统计卡片缺 {el}"
+
+    main = client.get("/static/js/main.js").text
+    assert "countIncident(a)" in main, "统计没接进播报流"
+    # ★ 必须先于 receive()：receive 在暂停时直接返回，出事照样要记
+    assert main.index("countIncident(a)") < main.index("receive(a)"), \
+        "统计要在 receive() 之前 —— 暂停时 receive 会提前返回"

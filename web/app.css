@@ -606,3 +606,17 @@ video { display: block; width: 100%; }
 /* 底图确认起不来时（watchRenderer）把 #map 整个藏掉 —— 百度会给它挂一张
    白灰色的 bg.png，留在示意图底下会让人以为「图在这儿，只是没加载完」。 */
 .map-stage.nomap #map { display: none; }
+
+/* ===================== 意外统计 =====================
+   给陪同者看的：这次出门出了几次事。刻意做得紧凑 —— 它不是主界面，
+   只是回答一个问题，不该跟播报流抢位置。 */
+.inc-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+.inc-head h2 { margin: 0; }
+.inc-list {
+  display: grid; grid-template-columns: auto 1fr; gap: 6px 12px;
+  margin: 0; font-size: 13px;
+}
+.inc-list dt { color: var(--dim); font-size: 12px; letter-spacing: .04em; }
+.inc-list dd { margin: 0; color: var(--fg-2); }
+/* 一行里出现「跌倒·确认 1」时，把它念得响一点 —— 那是真出事了 */
+.inc-list dd:not(:empty) { font-variant-numeric: tabular-nums; }

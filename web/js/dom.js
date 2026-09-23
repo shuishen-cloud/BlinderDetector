@@ -6,6 +6,9 @@
 
 export const $ = (id) => document.getElementById(id);
 
+/** 需要用户**动作**的层 —— 只有它值得抢屏，见 ui.js 的 receive()。 */
+export const SOURCE_EMERGENCY = "emergency";
+
 export const SOURCE_NAMES = {
   perception: "感知",
   safety: "安全",

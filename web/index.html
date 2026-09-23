@@ -146,9 +146,26 @@
       </div>
     </section>
 
+    <!-- ---------------- 意外统计（给陪同者/家属看） ----------------
+         ★ 盲人用户看不到这一屏，所以它不是产品主界面的一部分 —— 但它
+           回答的是陪同者最想知道的问题：「这次出门出了几次事」。
+         ★ 分两组：意外 = 已经发生的事（次数少，每个都要紧）；
+           预警 = 系统替他躲过去的事（次数多，混在一起会让"意外 8 次"
+           这种数字失去意义）。判据取 detail 里的既有字段，见 js/incidents.js。 -->
+    <section class="card incidents">
+      <div class="inc-head">
+        <h2>意外统计<small>本次会话</small></h2>
+        <button class="btn ghost sm" id="incReset">清零</button>
+      </div>
+      <dl class="inc-list">
+        <dt>意外</dt><dd id="incAccidents">无</dd>
+        <dt>预警</dt><dd id="incWarnings">无</dd>
+      </dl>
+    </section>
+
     <!-- ---------------- 导航（第三层） ---------------- -->
     <section class="card">
-      <h2>导航<small id="map-src">准备中…</small></h2>
+      <h2>导航</h2>
 
       <div class="row">
         <input type="text" id="dest" value="太原站" placeholder="要去哪儿" enterkeyhint="go" autocomplete="off">
@@ -211,14 +228,22 @@
   </div>
 
   <!-- ---------------- 底部操作栏 ---------------- -->
-  <!-- 底部栏只留「播报」开关（2026-09-23）。
-       两个求助按钮已挪到顶部 .sosbar —— 它们要「一直都在最顶端」。
-       播报开关留在这里是因为它是最常用的开关，拇指位最省力。 -->
+  <!-- 底部栏：播报开关 + **求助/取消的第二个入口**（2026-09-23）。
+       ★ 求助按钮**上下都有**，这是刻意的冗余，不是重复：
+         顶部那个满足「一直都在最顶端」（视觉上最显眼）；
+         底部这个在拇指位（盲人用户靠肌肉记忆摸按钮，单手时够得到）。
+       ★ 而且项目自己的契约文档就写着理由：《api-contract.md》§4.2
+         「冗余触发是安全系统的基本要求 —— **单一触发通道等于单点故障**」。
+         一个求助按钮在紧急时够不到，就等于没有。 -->
   <nav class="tabbar" aria-label="常用操作">
     <button class="btn ghost tab" id="ttsBtn" aria-pressed="true" title="用浏览器 TTS 念出播报">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 5 6.5 9H3v6h3.5L11 19zM15.5 8.5a5 5 0 0 1 0 7" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
       <span id="ttsTxt">播报：开</span>
     </button>
+    <button class="btn sos" data-route="/v1/emergency/sos"
+            data-body='{"extra":{"index":1,"kind":"sos"}}'>一键求助</button>
+    <button class="btn ghost tab" data-route="/v1/emergency/cancel"
+            data-body='{"extra":{"kind":"cancel"}}'>取消求助</button>
   </nav>
 </div>
 

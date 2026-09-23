@@ -7,7 +7,7 @@
  * 这一半包括：播报流渲染、紧急全屏、轻提示、语音与震动、筛选/暂停/清空。
  */
 
-import { $, SOURCE_NAMES, EMPTY_HTML } from "./dom.js";
+import { $, SOURCE_NAMES, EMPTY_HTML, SOURCE_EMERGENCY } from "./dom.js";
 import { state, history, queue, bump } from "./state.js";
 import { log } from "./log.js";
 
@@ -58,10 +58,20 @@ export function receive(a) {
   bump("total");
 
   // ★ 紧急播报**不排队**：暂停是「别往墙上贴」，不是「别告诉我出事了」。
-  if (a.priority >= 3) {
-    bump("critical");
-    emergency(a);
-  }
+  if (a.priority >= 3) bump("critical");
+
+  // ★★ 视觉全屏**只留给需要用户动作的播报**（跌倒二次确认 / 求助）。
+  //
+  //   安全层的危险障碍物不抢屏。理由是按盲人使用逻辑来的：
+  //     · 全屏遮罩对一个看不到屏幕的人**毫无作用** —— 信息全在耳朵和震动里；
+  //     · 它唯一的作用是给陪同者看，而实测 36 秒会弹 8 次（全是自行车/来车），
+  //       屏幕几乎一直被红色盖着，反而把陪同者要看的信息挡掉了。
+  //
+  //   危险障碍物的强提示走另外两条通道，本来就够：
+  //     耳朵 —— TTS 念出来（speak）
+  //     手  —— haptic="double"（见 contracts.announcement 的优先级映射）
+  //   而跌倒/求助是**交互**：用户得听到问题、并做动作应答，那时才值得抢屏。
+  if (a.source === SOURCE_EMERGENCY && a.priority >= 3) emergency(a);
 
   // 暂停只是「不往墙上贴」，不拦数据 —— 统计照涨，恢复时补上，
   // 否则暂停期间发生的事在调试台里就凭空消失了。
@@ -145,8 +155,9 @@ function expire(el, ttl) {
   }, ttl);
 }
 
-function haptic(kind, el) {
-  if (kind && kind !== "none") {
+/** 震一下。`el` 可选 —— 不传就只走真马达（动作确认时不需要视觉闪烁）。 */
+export function haptic(kind, el) {
+  if (el && kind && kind !== "none") {
     el.classList.add("haptic");
     setTimeout(() => el.classList.remove("haptic"), 300);
   }
@@ -159,7 +170,7 @@ function haptic(kind, el) {
 // 语音播报
 // =====================================================================
 
-function speak(text) {
+export function speak(text) {
   if (!state.ttsOn || state.paused || !window.speechSynthesis) return;
   const u = new SpeechSynthesisUtterance(text);
   u.lang = "zh-CN";
