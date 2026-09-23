@@ -191,6 +191,10 @@ main {
 .field span { font-size: 11px; }
 
 .hint { margin: 11px 0 0; font-size: 12px; color: var(--dim); }
+/* 降级提示（起点没定到、只能用默认坐标）。★ 颜色只是第三重编码 ——
+   这行字本身就写着「默认坐标（原因）」，颜色只是让它**在该被注意到时**
+   自己跳出来；不是靠颜色来表达「出事了」。 */
+.hint.warn { color: var(--warn); }
 .hint b { color: var(--fg-2); font-weight: 600; }
 code {
   font: 11.5px/1.5 var(--mono); color: var(--fg-2);

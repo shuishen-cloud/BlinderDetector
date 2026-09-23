@@ -941,12 +941,12 @@ def test_voice_button_is_hold_to_talk_not_a_click(client):
 
 
 def test_voice_hands_the_text_to_the_existing_nav_path(client):
-    """★ 松开之后**不许新增请求路径** —— 文本落进 `#dest`，再按下那个既有按钮。
+    """★ 松开之后**不许新增请求路径** —— 文本落进 `#dest`，再调 `submitRoute()`。
 
     起因：目的地是这一页唯一要用户输入文字的地方，语音只是换掉「怎么把字填
-    进去」。路由、坐标、错误处理全在既有的 `data-dest` 按钮里（dev.js）。
-    在这里再写一份 fetch 就等于把那条路复制成两份，改一处另一处会**静默**
-    不一致 —— 这个项目刚在 `.video-strip` 上栽过同类跟头。
+    进去」。路由、坐标、错误处理全在 `nav.js::submitRoute()` 里（打字那条路
+    也走它）。在这里再写一份 fetch 就等于把那条路复制成两份，改一处另一处会
+    **静默**不一致 —— 这个项目刚在 `.video-strip` 上栽过同类跟头。
 
     ★ 先报「听到了什么」再出发：识别错了的话，用户此刻就能开口纠正，而不是
       等路线播报出来才发现去的是别的地方。
@@ -954,8 +954,8 @@ def test_voice_hands_the_text_to_the_existing_nav_path(client):
     js = client.get("/static/js/voice.js").text
 
     assert '$("dest").value = text' in js, "识别结果要落进原来那个输入框"
-    assert 'querySelector("button[data-dest]")' in js, "要按下既有的导航按钮，而不是自己发请求"
-    assert ".click()" in js
+    assert 'from "./nav.js"' in js and "submitRoute" in js, \
+        "要调 nav.js 里那条唯一的路，而不是自己发请求"
     assert "fetch(" not in js and "postJson" not in js, \
         "语音这一层不许自己发请求 —— 那条路只该有一份"
     assert "目的地：" in js, "要先把听到的内容念一遍再出发"
@@ -963,8 +963,69 @@ def test_voice_hands_the_text_to_the_existing_nav_path(client):
     # 顺序：写入 →（念一遍）→ 出发
     write = js.index('$("dest").value = text')
     speak_at = js.index("speak(`目的地：")
-    click_at = js.index("go.click()")
-    assert write < speak_at < click_at, "顺序必须是「落进输入框 → 报一遍 → 出发」"
+    go_at = js.index("submitRoute()", speak_at)
+    assert write < speak_at < go_at, "顺序必须是「落进输入框 → 报一遍 → 出发」"
+
+
+def test_navigation_has_exactly_one_submit_path(client):
+    """★ 目的地有**两条**输入方式，但只能有**一条**请求路径。
+
+    「按住说话」和「打字回车」是同一件事的两种开头，后面必须完全一样。
+    原先这条路挂在「开始导航」那个按钮上：语音靠 `button[data-dest].click()`
+    去按它 —— 于是「那个按钮」成了这条路上不可删的一环，而它对用户早已多余
+    （语音松开即出发、打字敲回车）。2026-09-23 把路抽成
+    `nav.js::submitRoute()`，两条输入直连同一个出口，按钮连根删掉。
+
+    钉住三件事，缺一条都会让「两条路」重新分叉：
+      · `submitRoute` 全项目**只定义一次**，而且在 nav.js（复制一份 = 埋雷）；
+      · 打字那条真的接上了（`#dest` 上回车 → submitRoute）；
+      · 页面上不再有 `data-dest` / `data-geo` 那种「按一下才出发」的按钮。
+    """
+    js = client.get("/static/js/nav.js").text
+    assert js.count("export async function submitRoute(") == 1, \
+        "唯一的提交出口应该只有一份实现"
+    # 别的模块只能 import 它，不许自己再写一份
+    for path in ("/static/js/voice.js", "/static/js/dev.js", "/static/js/main.js",
+                 "/static/js/ui.js"):
+        assert "export async function submitRoute(" not in client.get(path).text, \
+            f"{path} 里出现了第二份 submitRoute"
+
+    assert '$("dest").addEventListener("keydown"' in js, \
+        "打字那条路要接在 #dest 的回车上"
+    assert 'e.key !== "Enter"' in js and "submitRoute()" in js, \
+        "回车必须直接出发，不该再让用户去找按钮"
+
+    html = html_body(client)
+    assert "data-dest" not in html, "「开始导航」按钮已经删了，别再回来"
+    assert "data-geo=" not in html, "坐标那两项归 nav.js，不该再挂在按钮上"
+    assert "开始导航" not in html, "用户面前不该再有这一道多余的门"
+
+
+def test_navigation_origin_defaults_to_where_the_user_is(client):
+    """★ 起点 = 当前位置，进页面自动取 —— 不是一道要用户按的选择题。
+
+    这一页服务的是**正在走的人**：起点就是他此刻在哪，没有第二种可能。
+    原先默认写死一组坐标、旁边放个「用当前位置」，等于把一个确定的事实
+    变成了一个要用户先意识到、再去按的选项。
+
+    两件事都要钉：
+      · 进页面就定位（`locate({ manual: false })`）；
+      · 定位失败要**说出来**（`localNote`）—— 那一刻没人按过任何按钮，所以
+        没有任何 confirmAction 会响，不说的话用户会以为路线是从他脚下算的。
+    """
+    js = client.get("/static/js/nav.js").text
+    assert "locate({ manual: false })" in js, "进页面就该自动定位起点"
+    assert "navigator.geolocation.getCurrentPosition" in js, "起点取自端侧 GPS"
+
+    i = js.index("(err) => {")
+    body = js[i:js.index("\n    },", i)]
+    assert "localNote(" in body, \
+        "自动定位失败必须出声（那一刻没有任何按钮被按过），不能只在页面上变个色"
+    assert "paintOrigin(null, why)" in body, "同时要把「用的是默认坐标」写在页面上"
+
+    html = html_body(client)
+    assert 'id="originNote"' in html, "起点状态要有地方显示（读屏也要读得到）"
+    assert 'id="geoBtn"' in html, "手动重试定位的入口要留着"
 
 
 def test_voice_input_says_so_when_it_cannot_work(client):
@@ -1217,7 +1278,7 @@ PAGE_JS = {
     "/": ["/static/js/dom.js", "/static/js/state.js", "/static/js/log.js",
           "/static/js/speech.js", "/static/js/voice.js",
           "/static/js/net.js", "/static/js/ui.js", "/static/js/dev.js",
-          "/static/js/main.js", "/static/map.js"],
+          "/static/js/nav.js", "/static/js/main.js", "/static/map.js"],
     "/static/sender.html": ["/static/js/sender.js", "/static/js/dom.js",
                             "/static/js/state.js", "/static/js/log.js",
                             "/static/js/net.js"],
@@ -1273,7 +1334,8 @@ def _resolve_module(base_dir: str, spec: str) -> str:
 def test_every_module_import_resolves(client):
     """模块 import 的路径都要真的取得到 —— 拼错在浏览器里是**静默失败**：
     整页 JS 不执行，而控制台之外看不出任何异常。"""
-    for page in ("/static/js/main.js", "/static/js/dev.js", "/static/map.js",
+    for page in ("/static/js/main.js", "/static/js/dev.js", "/static/js/nav.js",
+                 "/static/js/voice.js", "/static/map.js",
                  "/static/js/sender.js"):
         base_dir = str(PurePosixPath(page).parent)
         for m in re.findall(r'from "(\.{1,2}/[^"]+)"', client.get(page).text):
@@ -1391,14 +1453,21 @@ def test_action_results_are_audible_not_only_visible(client):
 
     按「一键求助」只弹一个视觉提示，用户不知道自己按上没有。
     所以走三条通道：toast（陪同者）+ TTS（用户）+ haptic（关播报时兜底）。
+
+    ★ 2026-09-23：确认入口从 dev.js 搬到了 ui.js —— 导航（产品功能）也要用它，
+      而产品功能不该反向 import 调试件（dev.js 的头注释把这条界线写得很清楚）。
     """
-    js = client.get("/static/js/dev.js").text
-    assert "function confirmAction(" in js, "要有统一的动作确认入口"
-    i = js.index("function confirmAction(")
+    js = client.get("/static/js/ui.js").text
+    assert "export function confirmAction(" in js, "要有统一的动作确认入口"
+    i = js.index("export function confirmAction(")
     body = js[i:js.index("\n}\n", i)]
     for ch in ("toast(", "speak(", "haptic("):
         assert ch in body, f"动作确认缺 {ch} 这条通道"
-    assert "toast(routeToast(" not in js, "路由按钮不该退回只弹 toast"
+
+    dev = client.get("/static/js/dev.js").text
+    assert "toast(routeToast(" not in dev, "路由按钮不该退回只弹 toast"
+    assert "confirmAction" in dev and 'from "./ui.js"' in dev, \
+        "调试面板要用同一个确认入口，而不是自己再写一份"
 
 
 def test_html_ids_are_unique(client):

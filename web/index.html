@@ -135,13 +135,22 @@
           <span id="talkTxt">按住说话</span>
         </button>
       </div>
+      <!-- ★ 没有「开始导航」按钮（2026-09-23 删）。
+             它是一道多余的门：目的地已经有了两条输入方式，而两条都是
+             **说完/打完就出发** —— 语音松开即走，打字敲回车（手机软键盘上
+             那颗「前往」就是回车，见 `enterkeyhint="go"`）。留着这个按钮
+             只会让人以为「说完还得再按一下」，多一步、多一个要摸的东西。
+             两条路在 `js/nav.js::submitRoute()` 上合成一条，那是唯一的出口。 -->
       <div class="row">
-        <button class="btn primary wide" data-route="/v1/navigation/route"
-                data-dest="1" data-geo="1">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 4 6 2 5-2v14l-5 2-6-2-5 2V6z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg>
-          开始导航
-        </button>
-        <button class="btn" id="geoBtn" title="用手机定位填起点">用当前位置</button>
+        <!-- 起点默认就是当前位置，进页面自动取 —— 它现在是**重试**用的：
+             定位失败（没权限 / 不是 https / 不是 localhost）时再按一次。 -->
+        <button class="btn" id="geoBtn" title="重新用手机定位取起点">重新定位</button>
+        <!-- 起点**是从哪算的**必须写在明面上：看不到屏幕的人靠这行字（读屏）
+             确认系统知道他在哪；陪同者靠它判断有没有真的定到。
+             ★ 不加 aria-live：要出声的只有**降级**那一种情况，走 nav.js 的
+               localNote（TTS / 读屏二选一，见 ui.js::paintTts 的规矩）；
+               常态下没有新消息就不该有声音。 -->
+        <p class="hint" id="originNote">起点：定位中…</p>
       </div>
 
       <details class="adv">
@@ -335,7 +344,7 @@
           <button class="btn" data-route="/v1/emergency/tick" data-body='{"now_ms":9999999999999}'>推进时钟</button>
         </div>
         <p class="hint">
-          「一键求助」和「开始导航」在手机视图里（那两条是产品功能，不是测试件）。
+          「一键求助」在手机视图里（那是产品功能，不是测试件）。
         </p>
         <p class="hint">
           「推进时钟」发的是 <code>now_ms=9999999999999</code>（公元 2286 年），

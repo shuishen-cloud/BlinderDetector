@@ -15,7 +15,8 @@ import {
   onAvailabilityChange, cycleRate, rateLabel,
 } from "./speech.js";
 
-// 动作确认（dev.js）要走同一条出口 —— 转发一次，别让调用方改 import。
+// ★ speak 从 speech.js 转发出来：改这一处的 import 就够了，调用方
+//   （dev.js / nav.js）不必知道语音那半在哪个模块。
 export { speak };
 
 // =====================================================================
@@ -181,6 +182,25 @@ export function haptic(kind, el) {
   // 端侧真马达；浏览器上多数环境没有，拿不到就静默退回视觉提示
   const pat = { short: 80, double: [60, 60, 60], long: 400 }[kind];
   if (pat && navigator.vibrate) navigator.vibrate(pat);
+}
+
+/** 动作确认 —— 三通道一起给，因为**这一层不能假设用户在看屏幕**。
+ *
+ *   眼睛（陪同者）—— toast
+ *   耳朵（用户）  —— TTS 念一遍结果，否则按了「一键求助」也不知道按上没有
+ *   手            —— 震一下；关了播报开关时，这是唯一的反馈
+ *
+ *  ★ 2026-09-23 从 dev.js 搬过来：它原先只服务调试面板里那几个「其余路由」，
+ *    现在**导航**这条产品功能也要它 —— 而产品功能不该反向 import 调试件
+ *    （dev.js 的头注释把这条界线写得很清楚）。放在 toast / speak / haptic
+ *    旁边，它仨本来就都在这一层。
+ */
+export function confirmAction(msg, kind = "") {
+  toast(msg, kind);
+  // ★ 带 interrupt：用户**自己按的**（或说完话自动发的）动作优先于一条没人要
+  //   的场景描述 —— 按了按钮却要等十几秒才听到回声，用户只会再按一次。
+  speak(msg, { priority: 2, interrupt: true });
+  haptic("short");
 }
 
 // =====================================================================

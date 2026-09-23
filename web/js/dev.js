@@ -11,12 +11,18 @@
  *
  * ★ 隐藏 ≠ 删除：这些元素仍在 DOM 里，各模块一律按 id 取用，
  *   真删掉会当场报错。所以是 `hidden`，翻出来就能继续验证契约。
+ *
+ * ★ 导航**不在这里**（2026-09-23 搬走）：目的地与起点是产品功能，而且目的地
+ *   有两条输入方式（打字 / 按住说话）却只能有一条请求路径 —— 见 `js/nav.js`。
+ *   原来那条路挂在「开始导航」按钮上（`data-dest` / `data-geo`），语音要靠
+ *   按一下那个按钮才能出发；按钮对用户已经完全多余（松开即出发、打字走回车），
+ *   所以把它连根拔掉，路抽成 nav.js 里的 `submitRoute()`。
  */
 
-import { $, readGeo } from "./dom.js";
+import { $ } from "./dom.js";
 import { log } from "./log.js";
 import { postJson, fetchHealth } from "./net.js";
-import { toast, speak, haptic, localNote } from "./ui.js";
+import { speak, haptic, localNote, confirmAction } from "./ui.js";
 import LingmouMap from "../map.js";
 
 // =====================================================================
@@ -52,27 +58,10 @@ function routeToast(path, g) {
     return g.produced ? "已发出求助" : "求助已在处理中，没有重复播报";
   }
   if (path.endsWith("/emergency/cancel")) return "已取消求助";
-  if (path.endsWith("/navigation/route")) {
-    return g.produced ? "路线已下发，播报马上到" : "没有拿到可播报的路线";
-  }
   if (path.endsWith("/safety/fall")) {
     return g.produced ? "跌倒信号已发出" : "跌倒信号已发出（重复，已忽略）";
   }
   return g.produced ? `已发送，放行 ${g.passed} 条` : "已发送（被闸门丢弃）";
-}
-
-/** 动作确认 —— 三通道一起给，因为**这一层不能假设用户在看屏幕**。
- *
- *   眼睛（陪同者）—— toast
- *   耳朵（用户）  —— TTS 念一遍结果，否则按了「一键求助」也不知道按上没有
- *   手            —— 震一下；关了播报开关时，这是唯一的反馈
- */
-function confirmAction(msg, kind = "") {
-  toast(msg, kind);
-  // ★ 带 interrupt：用户**自己按的**按钮优先于一条没人要的场景描述 ——
-  //   按了按钮却要等十几秒才听到回声，用户只会再按一次。
-  speak(msg, { priority: 2, interrupt: true });
-  haptic("short");
 }
 
 /** 按下就要给回执的路由 —— 生死按钮不能等网络回来才响。
@@ -95,18 +84,6 @@ function bindRouteButtons() {
         { frame_id: `ui_${Date.now()}`, ts: Date.now() },
         JSON.parse(btn.dataset.body || "{}"),
       );
-      if (btn.dataset.dest) {
-        body.extra = { ...(body.extra || {}), destination: $("dest").value };
-      }
-      if (btn.dataset.geo) {
-        // 第三层的坐标。真实地图只认坐标、不认地名，所以目的地坐标做成可选的
-        // `destination_geo`：留空时不发，后端会如实降级回内置路网并播报说明。
-        const origin = readGeo("geo");
-        const destGeo = readGeo("dest-geo");
-        body.extra = { ...(body.extra || {}) };
-        if (origin) body.extra.geo = origin;
-        if (destGeo) body.extra.destination_geo = destGeo;
-      }
       try {
         const ack = PRESS_ACK[path];
         if (ack) {
@@ -123,43 +100,6 @@ function bindRouteButtons() {
       }
     };
   });
-}
-
-/** 「用当前位置」—— 手机上唯一能自己拿到起点的方式。 */
-function bindGeoButton() {
-  $("geoBtn").onclick = () => {
-    const btn = $("geoBtn");
-    const reset = () => { btn.disabled = false; btn.textContent = "用当前位置"; };
-
-    if (!navigator.geolocation) {
-      confirmAction("这个浏览器不提供定位", "err");
-      return;
-    }
-    btn.disabled = true;
-    btn.textContent = "定位中…";
-
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        // ★ 浏览器给的就是 WGS-84 —— 与服务端 AK 的 coord_type=wgs84 对齐。
-        //   本项目**不做** WGS-84 → BD-09 的转换（见 app/core/routers/base.py）。
-        $("geo-lat").value = pos.coords.latitude.toFixed(6);
-        $("geo-lng").value = pos.coords.longitude.toFixed(6);
-        const adv = $("geo-lat").closest("details");
-        if (adv) adv.open = true;          // 展开，让改动看得见
-        confirmAction(`起点已换成当前位置（精度约 ${Math.round(pos.coords.accuracy)} 米）`, "ok");
-        reset();
-      },
-      (err) => {
-        // 定位只在 https 或 localhost 下可用 —— 局域网 IP 直连会被浏览器拒绝。
-        confirmAction(`定位失败：${err.message || err.code}（需要 HTTPS 或 localhost）`, "err");
-        reset();
-      },
-      { enableHighAccuracy: true, timeout: 8000, maximumAge: 0 },
-    );
-
-    // 兜底：某些实现两个回调都不来，按钮不能永远卡在「定位中…」。
-    setTimeout(reset, 9000);
-  };
 }
 
 // =====================================================================
@@ -253,7 +193,6 @@ export function initDev() {
   });
 
   bindRouteButtons();
-  bindGeoButton();
 
   health();
   setInterval(health, 5000);

@@ -10,9 +10,12 @@
  *   本身就是状态 —— 手指按着就是在听。松开即结束，不存在「忘了关」。
  *
  * ★ 松开之后**不新增任何请求路径**：识别出的文本写进 `#dest`（和打字完全
- *   同一个落点），然后替用户按下那个既有的导航按钮 —— 它本来就读
- *   `#dest.value`（见 dev.js::bindRouteButtons 的 `data-dest`）。
- *   换句话说，语音只换掉「怎么把字填进去」，后面的路一步没变。
+ *   同一个落点），再调 `nav.js::submitRoute()` —— 打字敲回车走的是**同一个
+ *   函数**。换句话说，语音只换掉「怎么把字填进去」，后面的路一步没变。
+ *
+ *   （2026-09-23 之前这里点的是「开始导航」那个按钮。那个按钮现在已经删掉：
+ *   它对用户完全多余，而留着它就等于说「这条路上有一个必须存在的按钮」。
+ *   把路抽成 submitRoute() 之后，两条输入方式直连同一个出口。）
  *
  * ★ 三通道反馈（和紧急按钮一个规矩）：眼睛看按钮文字、耳朵听状态、手指感震动。
  *   录的时候听不见「现在在录」是最糟的 —— 用户会对着空气说，然后以为系统坏了。
@@ -20,7 +23,9 @@
 
 import { $ } from "./dom.js";
 import { log } from "./log.js";
-import { toast, speak, haptic, localNote } from "./ui.js";
+import { toast, speak, haptic } from "./ui.js";
+// ★ 导航请求的**唯一**出口（打字那条路也走它）—— 见 nav.js 的头注释。
+import { submitRoute } from "./nav.js";
 
 /** 浏览器给的构造器。Chrome / Edge 有前缀版，Safari 也有；Firefox 至今没有。 */
 function RecogCtor() {
@@ -50,11 +55,11 @@ function paint(btn, state) {
   btn.setAttribute("aria-label", LABELS[state]);
 }
 
-/** 松开之后：把文本交给**原来那条路**。
+/** 松开之后：把文本交给**原来那条路**（`nav.js::submitRoute`，打字那条也走它）。
  *
- *  ★ 不在这里 fetch：导航请求的路由、坐标、错误处理全在已有的按钮里
- *    （dev.js）。这里多写一份就等于把那条路复制成两份，改一处另一处会静默
- *    不一致 —— 这个项目刚在 `.video-strip` 上栽过同类跟头。
+ *  ★ 不在这里 fetch：路由、坐标、错误处理全在 submitRoute 里。这里多写一份
+ *    就等于把那条路复制成两份，改一处另一处会静默不一致 —— 这个项目刚在
+ *    `.video-strip` 上栽过同类跟头。
  */
 function handOver(text) {
   $("dest").value = text;                 // ← 和打字完全同一个落点
@@ -65,13 +70,8 @@ function handOver(text) {
   // 而不是等路线播报出来才发现去的是别的地方。
   speak(`目的地：${text}`, { priority: 2, interrupt: true });
 
-  const go = document.querySelector("button[data-dest]");
-  if (!go) {
-    localNote("找不到导航按钮，请手动点「开始导航」", { priority: 2, hapticKind: "double" });
-    return;
-  }
-  // 让「目的地：X」这句话先出去，再让按钮的请求跑起来（路线播报随后接上）。
-  setTimeout(() => go.click(), 0);
+  // 让「目的地：X」这句话先出去，再让请求跑起来（路线播报随后接上）。
+  setTimeout(() => submitRoute(), 0);
 }
 
 /** 没听清 / 没权限：都要**说出来**，不能安安静静地什么都不做。 */
