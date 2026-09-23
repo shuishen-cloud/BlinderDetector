@@ -53,6 +53,15 @@ body {
   filter: blur(10px);
 }
 
+/* 只给读屏看的文字（视觉上藏起来，但仍在可访问性树里）。
+   用来给**只有占位符**的输入框补一个真 label —— placeholder 不算 label：
+   读屏聚焦到那里时念的是「编辑框」，而不是「要去哪儿」。 */
+.sr {
+  position: absolute; width: 1px; height: 1px;
+  margin: -1px; padding: 0; border: 0;
+  clip-path: inset(50%); overflow: hidden; white-space: nowrap;
+}
+
 /* ===================== 顶栏 ===================== */
 
 .topbar {
@@ -468,6 +477,12 @@ video { display: block; width: 100%; }
   display: flex; flex-direction: column;
   min-height: 100dvh;              /* dvh：手机上地址栏收起/展开不会跳 */
   max-width: 560px; margin: 0 auto;
+  /* ★ 只在这一层把最暗的那档文字提亮一档（--dim 原值 #6d7891 在 --bg 上
+     只有 4.50:1，刚好卡在门槛上；提到 #98a3ba 是 7.86:1）。
+     ★ 为什么用**作用域覆盖**而不是改 :root：桌面调试台是另一套用途，
+       它靠 --dim 把次要信息压低来给契约明细分出层次，跟着一起提亮
+       反而会把那张表读糊。深色是这一整页的底色，这一层才是交付形态。 */
+  --dim: #98a3ba;
 }
 
 /* 顶部常驻区（品牌栏 + 安全操作条）。
@@ -525,8 +540,21 @@ video { display: block; width: 100%; }
   mask-image: linear-gradient(180deg, #000 calc(100% - 26px), transparent);
 }
 .phone .ann .txt { font-size: 16.5px; }
-/* 最新一条读起来最响 —— 播报流是这条产品的主界面 */
-.phone .feed > .ann:first-child { border-color: var(--line-2); }
+/* 最新一条读起来最响 —— 播报流是这条产品的主界面。亮一点的边 + 亮一点的底。 */
+.phone .feed > .ann:first-child {
+  border-color: var(--line-2);
+  background: linear-gradient(180deg, rgba(255, 255, 255, .075), rgba(255, 255, 255, .02));
+}
+/* ★ #feed 是可聚焦的（tabindex="0"：读屏用户能主动进来逐条读）。键盘 /
+   开关设备用户靠焦点环才知道自己「进来了」—— 没有它就没有落点。 */
+.phone .feed:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 12px; }
+/* ★ 状态药在手机视图里加重：这两枚药是**唯一**能看出「后端哑了 / 连接断了」
+   的地方 —— 播报流哑掉时只是停住不动，那和「一切都好、只是暂时没人说话」
+   长得一模一样。它值得比装饰文字更响。
+   ★ 加重的是**文字**不是圆点：那个彩色小圆点读屏念不出来（.dot 已
+   aria-hidden），真正的信息在 <span> 里（见 index.html 的 role="status"）。 */
+.phone .pill { font-size: 13px; font-weight: 600; letter-spacing: .01em; }
+.phone .pill .dot { width: 8px; height: 8px; }
 /* 契约明细（priority / ttl / haptic / id）在手机视图里**收敛但不删** ——
    播报流只有这一处，删了就再也看不到契约；但也别让它抢正文的注意力。 */
 .phone .ann .meta { margin-top: 7px; opacity: .72; }
@@ -534,7 +562,7 @@ video { display: block; width: 100%; }
 .phone .feed-foot { margin-top: 13px; }
 
 /* 触控目标一律 ≥ 44px。手机上没有 hover，只有手指。 */
-.phone .btn { min-height: 40px; font-size: 14px; }
+.phone .btn { min-height: 44px; font-size: 14px; }
 .phone input[type=text] { min-height: 42px; font-size: 15px; }
 .phone input[type=number] { min-height: 40px; font-size: 15px; }
 
@@ -570,6 +598,18 @@ video { display: block; width: 100%; }
 .tab svg, .btn.wide svg { width: 18px; height: 18px; }
 .btn.wide svg { width: 16px; height: 16px; }
 .tab.on { color: #fff; background: rgba(91, 157, 255, .16); border-color: rgba(91, 157, 255, .5); }
+
+/* ★ 声音开关（#ttsBtn）—— 这一页最要紧的一个开关，全靠肌肉记忆去摸，
+   所以做了三重编码，任何一重单独坏了都还认得出：
+     形状：喇叭 / 喇叭带斜杠（关的时候那个斜杠自己就把话说完了）
+     文字：「声音：开」/「声音：关」
+     颜色：开是中性色，关是琥珀色（＝警示，和状态药同一个语义色）
+   光靠颜色不行 —— 看不见颜色的人不少。见 app.css 顶部那条注释：
+   颜色在这套样式里永远只是**第三重**编码。 */
+#ttsBtn[aria-pressed="false"] { color: var(--warn); border-color: rgba(251, 191, 36, .45); }
+#ttsBtn .ico-off { display: none; }
+#ttsBtn[aria-pressed="false"] .ico-on { display: none; }
+#ttsBtn[aria-pressed="false"] .ico-off { display: block; }
 
 /* ===================== 高级项（起终点坐标） ===================== */
 

@@ -80,8 +80,13 @@
     </div>
 
     <div class="status">
-      <span class="pill" id="wsPill"><i class="dot" id="wsDot"></i><span id="wsTxt">连接中…</span></span>
-      <span class="pill" id="hPill" title="健康检查"><i class="dot" id="hDot"></i><span id="hTxt">检查中</span></span>
+      <!-- ★ 状态药的 dot 是**纯视觉**的（读屏念不出来），所以每一枚都带
+           role="status" + aria-label：读屏念的是「连接状态：已连接」这种整句，
+           而不是光秃秃的「已连接」—— 后者听不出说的是哪一路。 -->
+      <span class="pill" id="wsPill" role="status" aria-label="连接状态">
+        <i class="dot" id="wsDot" aria-hidden="true"></i><span id="wsTxt">连接中…</span></span>
+      <span class="pill" id="hPill" title="健康检查" role="status" aria-label="系统状态">
+        <i class="dot" id="hDot" aria-hidden="true"></i><span id="hTxt">检查中</span></span>
       <button class="btn ghost icon" id="devBtn" aria-pressed="false"
               title="开发者模式（测试件）" aria-label="开发者模式">
         <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -113,6 +118,9 @@
       <h2>导航</h2>
 
       <div class="row">
+        <!-- ★ placeholder 不是 label：读屏用户聚焦到这里时，念的是「编辑框」
+             而不是「要去哪儿」。加一个只给读屏看的 label（.sr）。 -->
+        <label class="sr" for="dest">目的地</label>
         <input type="text" id="dest" value="太原站" placeholder="要去哪儿" enterkeyhint="go" autocomplete="off">
       </div>
       <div class="row">
@@ -182,7 +190,13 @@
           </div>
         </div>
       </div>
-      <div class="feed" id="feed">
+      <!-- ★ role="log" + aria-live 是给**读屏**（TalkBack / VoiceOver）用的：
+           这一页自带 TTS 朗读（speak()），两条声音通道会打架 —— 所以
+           `aria-live` 由 ui.js 跟着 TTS 开关走：TTS 开 → off（别双读），
+           TTS 关 → polite（把播报交给读屏）。见 ui.js::setTts()。
+           容器本身可聚焦，读屏用户也能主动进来逐条读。 -->
+      <div class="feed" id="feed" role="log" aria-label="播报流，最新的在最上面"
+           aria-live="off" tabindex="0">
         <div class="empty">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 5 6.5 9H3v6h3.5L11 19zM15.5 8.5a5 5 0 0 1 0 7" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
           <p>还没有播报</p>
@@ -190,7 +204,7 @@
         </div>
       </div>
       <div class="row feed-foot">
-        <button class="btn ghost" id="pauseBtn">暂停播报</button>
+        <button class="btn ghost" id="pauseBtn" aria-pressed="false">暂停播报</button>
         <button class="btn ghost" id="clearBtn">清空</button>
       </div>
     </section>
@@ -222,9 +236,13 @@
          「冗余触发是安全系统的基本要求 —— **单一触发通道等于单点故障**」。
          一个求助按钮在紧急时够不到，就等于没有。 -->
   <nav class="tabbar" aria-label="常用操作">
+    <!-- ★ 这是**最要紧的一个开关**（这一页的全部价值就是出声），而且要靠
+         肌肉记忆摸到 —— 所以：位置固定在左下、图标随状态换形（喇叭 / 喇叭带斜杠），
+         文字跟着变，颜色只作第三重编码。看不见屏幕也能确认自己按到了什么。 -->
     <button class="btn ghost tab" id="ttsBtn" aria-pressed="true" title="用浏览器 TTS 念出播报">
-      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 5 6.5 9H3v6h3.5L11 19zM15.5 8.5a5 5 0 0 1 0 7" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
-      <span id="ttsTxt">播报：开</span>
+      <svg class="ico-on" viewBox="0 0 24 24" aria-hidden="true"><path d="M11 5 6.5 9H3v6h3.5L11 19zM15.5 8.5a5 5 0 0 1 0 7M18.5 6a8.5 8.5 0 0 1 0 12" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+      <svg class="ico-off" viewBox="0 0 24 24" aria-hidden="true"><path d="M11 5 6.5 9H3v6h3.5L11 19zM16 9.5l5 5M21 9.5l-5 5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+      <span id="ttsTxt">声音：开</span>
     </button>
     <button class="btn sos" data-route="/v1/emergency/sos"
             data-body='{"extra":{"index":1,"kind":"sos"}}'>一键求助</button>

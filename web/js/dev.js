@@ -152,7 +152,13 @@ async function health() {
   try {
     const b = await fetchHealth();
     const bad = !b.ok;
-    $("hDot").className = "dot " + (bad ? "on" : "off");
+    // ★ 极性：彩点只作第三重编码，但它**不能反过来**。
+    //   .dot.on 是绿的（--ok）、.dot.off 是红的（--bad），与 wsDot 同一套约定。
+    //   这里原先写反了（bad ? "on" : "off"）—— 结果是系统**健康时亮红灯**、
+    //   降级时才变绿，配着旁边「正常」两个字正好把意思说反。
+    //   看不见文字、只认颜色的人会因此以为出了事；而唯一能看出的
+    //   「系统哑了」那条线索也就此失效。
+    $("hDot").className = "dot " + (bad ? "off" : "on");
     // ★ 手机上只说「正常 / 降级」两个词，但**必须说**：用户若不知道系统
     //   哑了，会把「没出声」理解成「环境安全」。细节放 title 与开发者面板
     //   —— 见 app/api/routes.py::health。

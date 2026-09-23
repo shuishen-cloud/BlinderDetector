@@ -821,6 +821,126 @@ def test_sos_buttons_live_in_the_top_dock(client):
 
 
 # --------------------------------------------------------------------------
+# 主页面的无障碍（2026-09-23）—— 按盲人的使用逻辑打磨
+# --------------------------------------------------------------------------
+
+
+def test_sr_labels_are_hidden_visually_but_present_in_the_tree(client):
+    """★ 只给读屏看的 label 必须**真的**藏起来。
+
+    起因：目的地输入框原来只有 placeholder。placeholder 不是 label ——
+    读屏聚焦过去只念「编辑框」，听不出这一格是「要去哪儿」。补的
+    `<label class="sr">` 如果 CSS 里漏了 `.sr`，它就变成一行普通文字
+    杵在输入框上方 —— 对看得见的人反而是新添的噪音。
+    所以「HTML 用了 `.sr`」和「CSS 定义了 `.sr`」要一起钉。
+    """
+    html = html_body(client)
+    assert re.search(r'<label class="sr" for="dest">', html), \
+        "目的地输入框要有只给读屏看的 label（placeholder 不算 label）"
+
+    css = client.get("/static/app.css").text
+    i = css.index(".sr {")
+    block = css[i:i + css[i:].index("}")]
+    assert "clip-path" in block or "clip:" in block, "视觉隐藏要靠 clip，不能只靠透明"
+    assert "1px" in block, "视觉隐藏的元素要缩到 1px，别占版面"
+
+
+def test_tts_switch_drives_the_screen_reader_channel(client):
+    """★ 两条声音通道不许同时开，也不许同时关。
+
+    这一页自带 TTS（speak()），而手机上大概率还开着读屏 —— 两边同时把
+    同一句话念出来就是双读。所以 `#feed` 的 aria-live 跟着 TTS 开关走：
+    TTS 开 → off（读屏别插嘴），TTS 关 → polite（读屏接手）。
+
+    ★ 为什么「同时关」也危险：TTS 关掉之后，读屏就是用户**唯一**还能
+      听到播报的通道。这里要是跟着一起哑了，系统就彻底不说话了 ——
+      而「不说话」和「一切都好」在手机上是同一个样子。
+    """
+    html = html_body(client)
+    assert 'role="log"' in html, "播报流要声明成 log，读屏才知道这是流水"
+    assert re.search(r'id="feed"[^>]*aria-live="off"', html), \
+        "初始（TTS 默认开）aria-live 必须是 off"
+
+    js = client.get("/static/js/ui.js").text
+    assert re.search(r'\$\("feed"\)\.setAttribute\("aria-live",\s*on \? "off" : "polite"\)', js), \
+        "aria-live 必须由 setTts() 跟着开关联动，不能写死"
+
+
+def test_sound_switch_carries_three_redundant_cues(client):
+    """★ 声音开关要靠三重编码，不靠颜色。
+
+    这是这一页最要紧的一个开关（看不见屏幕的人靠肌肉记忆去摸），所以：
+      · 形状 —— 喇叭 / 喇叭带斜杠，两个图标都在 HTML 里，CSS 按
+        aria-pressed 只放出一个；
+      · 文字 —— 开关状态写进 #ttsTxt；
+      · 颜色 —— 只当第三重编码。
+
+    ★ 为什么单靠颜色不行：看不见颜色的人不少，而这一枚按钮按错的代价是
+      「以为有声音，其实没有」—— 沉默失效里最典型的一种。
+    """
+    html = html_body(client)
+    i = html.index('id="ttsBtn"')
+    btn = html[i:i + html[i:].index("</button>")]
+    assert 'class="ico-on"' in btn and 'class="ico-off"' in btn, \
+        "开/关两个图标都要在 HTML 里（CSS 负责只放出一个）"
+    assert 'aria-pressed="true"' in btn, "默认开，aria-pressed 要如实反映"
+
+    css = client.get("/static/app.css").text
+    assert '#ttsBtn[aria-pressed="false"] .ico-off' in css, \
+        "关掉时要把「喇叭带斜杠」换出来 —— 形状本身要能把状态说清"
+    assert '#ttsBtn[aria-pressed="false"] .ico-on { display: none; }' in css, \
+        "关掉时别把两个图标同时显示出来"
+
+    js = client.get("/static/js/ui.js").text
+    assert '$("ttsTxt").textContent = on ? "声音：开" : "声音：关"' in js, \
+        "按钮上的文字要跟着状态变"
+
+
+def test_health_dot_colour_does_not_contradict_its_words(client):
+    """★ 健康药的**颜色不能和文字说反话**。
+
+    起因（2026-09-23，截图里看出来的）：健康时那枚药写着「正常」，圆点却是
+    红的 —— `dev.js` 把极性写反了（`bad ? "on" : "off"`）。`.dot.on` 是绿、
+    `.dot.off` 是红，与 `wsDot` 是同一套约定，所以那不是「另一种配色」，
+    就是错的。
+
+    ★ 为什么这条要紧：这两枚药是页面上**唯一**能看出「系统哑了」的地方，
+      而颜色是它最先被读到的一重编码。写反之后，系统好端端的时候亮红灯，
+      真降级了反而变绿 —— 恰好把唯一那条线索调了个方向。
+    """
+    js = client.get("/static/js/dev.js").text
+
+    assert '"dot " + (bad ? "off" : "on")' in js, \
+        "健康时必须是绿点（on），降级时才是红点（off）"
+    assert 'bad ? "降级" : "正常"' in js, "文字与颜色必须由同一个 bad 推出来"
+
+    # 断网兜底那一支也在这套约定里：红点 + 「连不上」。
+    assert '"dot off"' in js and '"连不上"' in js, \
+        "健康检查本身失败时也要如实亮红点，别悄悄停在上一帧"
+
+
+def test_status_pills_name_themselves_for_screen_readers(client):
+    """★ 两枚状态药要自报家门。
+
+    药里那个彩色小圆点是**纯视觉**的（读屏念不出来），去掉它之后
+    「已连接」三个字听不出说的是哪一路 —— 连接？还是系统健康？
+    所以每一枚都要有 role="status" + aria-label 把整句说全，
+    而圆点自己 aria-hidden（它没有额外信息，只是颜色）。
+
+    ★ 这两枚药是唯一能看出「后端哑了 / 连接断了」的地方：播报流哑掉时
+      只是停住不动，和「一切都好、只是没人说话」长得一模一样。
+    """
+    html = html_body(client)
+    for pid, label in (("wsPill", "连接状态"), ("hPill", "系统状态")):
+        i = html.index(f'id="{pid}"')
+        pill = html[i:i + html[i:].index("</span>")]
+        assert 'role="status"' in pill, f"{pid} 要让读屏把它当成状态播报"
+        assert f'aria-label="{label}"' in pill, f"{pid} 要自报是「{label}」而不是一句光秃秃的话"
+        assert 'class="dot"' in pill and 'aria-hidden="true"' in pill, \
+            f"{pid} 里的小圆点只是颜色，要对读屏隐藏"
+
+
+# --------------------------------------------------------------------------
 # 前端模块化（2026-09-23）—— 下面两条是这次重构真正的安全网
 # --------------------------------------------------------------------------
 

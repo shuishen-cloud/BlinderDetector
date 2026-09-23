@@ -189,9 +189,15 @@ export function speak(text) {
 
 export function setTts(on) {
   state.ttsOn = on;
-  $("ttsTxt").textContent = on ? "播报：开" : "播报：关";
+  $("ttsTxt").textContent = on ? "声音：开" : "声音：关";
   $("ttsBtn").classList.toggle("on", on);
   $("ttsBtn").setAttribute("aria-pressed", on ? "true" : "false");
+  // ★ 这一页有**两条**声音通道：自带 TTS（speak）和读屏（TalkBack / VoiceOver）。
+  //   两边同时念同一句话就是双读 —— 所以让 `aria-live` 跟着 TTS 开关走：
+  //   TTS 开着 → off（读屏别插嘴）；TTS 关掉 → polite（读屏接手，
+  //   此刻它成了用户唯一能听到播报的通道，不能再让它闭嘴）。
+  //   见 index.html 里 `#feed` 上那段注释。
+  $("feed").setAttribute("aria-live", on ? "off" : "polite");
   if (!on) window.speechSynthesis?.cancel();
 }
 
@@ -211,7 +217,12 @@ export function initUI() {
 
   $("pauseBtn").onclick = () => {
     state.paused = !state.paused;
-    $("pauseBtn").textContent = state.paused ? "恢复" : "暂停";
+    // ★ 文案与 aria-pressed 一起走。原先的文字是「暂停 / 恢复」两个光秃秃的动
+    //   词，读屏念出来分不清说的是「现在暂停着」还是「按了会暂停」——
+    //   写成「暂停播报 / 继续播报」后的那个动词就是**按下会发生什么**，
+    //   和 aria-pressed 里的**当前状态**配合着听才不会搞反。
+    $("pauseBtn").textContent = state.paused ? "继续播报" : "暂停播报";
+    $("pauseBtn").setAttribute("aria-pressed", state.paused ? "true" : "false");
     if (!state.paused && queue.length) {
       log(`恢复，补上积压的 ${queue.length} 条`, "dim");
       queue.splice(0).forEach((a) => paint(a, a.priority >= state.filterMin));
