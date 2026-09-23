@@ -625,14 +625,20 @@ def test_phone_feed_has_fixed_height_and_scrolls(client):
     assert "overscroll-behavior: contain" in block, "内滚到底不该把整页也带着滚"
 
 
-def test_video_strip_is_at_top_with_fixed_width(client):
-    """帧源放最上方是**给演示看的**（一眼看到系统在看什么）。
+def test_video_strip_has_fixed_width(client):
+    """帧源条：宽度**固定**，且必须在手机视图里。
 
-    但宽度必须固定：盲人用户看不到画面，它不该随屏幕自适应去挤占播报流。
+    ★ 「放最上方」这条要求已被取代（2026-09-23）：导航与播报改为占据
+      顶部，帧源条随之下移。所以位置断言改成「在手机视图内」而不是
+      「在最上方」—— 它仍不该被收进开发者面板（那样手机视图就没有帧源，
+      第一二层永远不会触发，见 test_phone_view_has_a_frame_source）。
+
+    宽度仍然必须固定：盲人用户看不到画面，它不该随屏幕自适应挤占播报流。
     """
     html = client.get("/").text
-    strip, feed = html.index('class="card video-strip"'), html.index('class="card feed-card"')
-    assert strip < feed, "帧源条要在播报流之前（最上方）"
+    strip = html.index('class="card video-strip"')
+    assert html.index('id="app"') < strip < html.index('id="devPanel"'), \
+        "帧源条要在手机视图里"
 
     css = client.get("/static/app.css").text
     blk = css[css.index(".strip-video {"):]
@@ -847,3 +853,34 @@ def test_incident_stats_are_wired(client):
     # ★ 必须先于 receive()：receive 在暂停时直接返回，出事照样要记
     assert main.index("countIncident(a)") < main.index("receive(a)"), \
         "统计要在 receive() 之前 —— 暂停时 receive 会提前返回"
+
+
+def test_nav_and_feed_are_the_first_two_cards(client):
+    """★ 导航与播报必须在最上方，且播报只占**约两条**的高度。
+
+    两者的可见性是「一直显示」的前提：
+      · 播报 —— 陪同者要一直看到「系统正在说什么」；
+      · 导航 —— 要一直看到「正往哪走」。
+    其余卡片（帧源、意外统计）是次要的，排在后面可以滚。
+    播报压到两条高度，是为了让这两张卡不靠滚动就能同屏看到。
+    """
+    body = html_body(client)
+    i = body.index('class="screen"')
+    seg = body[i:body.index('class="tabbar"', i)]
+
+    nav = seg.index("导航")
+    feed = seg.index("播报")
+    video = seg.index("video-strip")
+    inc = seg.index("意外统计")
+
+    assert nav < feed < video and nav < feed < inc, \
+        "导航与播报必须是前两张卡片"
+
+    css = client.get("/static/app.css").text
+    blk = css[css.index(".phone .feed"):]
+    blk = blk[:blk.index("}")]
+    m = re.search(r"height:\s*(\d+)px", blk)
+    assert m, "播报流应是固定像素高度（两条）"
+    # 一条 .ann 约 100px，两条 + 间距 ≈ 212 —— 容一点余量
+    assert 190 <= int(m.group(1)) <= 240, \
+        f"播报流高度 {m.group(1)}px 不是「约两条」（应在 190–240）"

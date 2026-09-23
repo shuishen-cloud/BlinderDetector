@@ -102,68 +102,7 @@
 
   <div class="screen">
 
-    <!-- ---------------- 帧源（顶部固定宽度） ---------------- -->
-    <!-- ★ 放最上方是为了**演示**：让看的人一眼看到「系统在看什么」。
-         宽度固定（132px），所以不会随屏幕自适应去挤占播报流的空间 ——
-         盲人用户看不到它，它不该是主界面的一部分。
-         ★ #video / #loopBtn 的 id 不能改：app.js 一律按 id 取 DOM。 -->
-    <section class="card video-strip">
-      <div class="strip-video">
-        <video id="video" src="/data/demo.mp4" muted loop playsinline></video>
-      </div>
-      <div class="strip-main">
-        <p class="strip-title">帧源<small>demo.mp4</small></p>
-        <!-- ★ 这行是必须的，不是装饰：视频没就绪时 grabAndSend() 会静默
-             return，按钮却已变成「停止发帧」—— 看起来和后端坏了没区别。
-             素材缺失（demo.mp4 是 gitignore 的产物）是最常见的触发方式。 -->
-        <p class="mini-msg" id="frameMsg">未开始</p>
-        <button class="btn primary sm" id="loopBtn">开始发帧</button>
-      </div>
-    </section>
-
-    <!-- ---------------- 播报流（主） ---------------- -->
-    <section class="card feed-card">
-      <div class="card-head">
-        <h2>播报<small>最新的在最上面</small></h2>
-        <div class="feed-tools">
-          <div class="chips" id="filters">
-            <button class="chip on" data-min="0">全部</button>
-            <button class="chip" data-min="2">重要+</button>
-            <button class="chip" data-min="3">紧急</button>
-          </div>
-        </div>
-      </div>
-      <div class="feed" id="feed">
-        <div class="empty">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 5 6.5 9H3v6h3.5L11 19zM15.5 8.5a5 5 0 0 1 0 7" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
-          <p>还没有播报</p>
-          <p class="dim">系统出声后，这里按时间倒序列出来</p>
-        </div>
-      </div>
-      <div class="row feed-foot">
-        <button class="btn ghost" id="pauseBtn">暂停播报</button>
-        <button class="btn ghost" id="clearBtn">清空</button>
-      </div>
-    </section>
-
-    <!-- ---------------- 意外统计（给陪同者/家属看） ----------------
-         ★ 盲人用户看不到这一屏，所以它不是产品主界面的一部分 —— 但它
-           回答的是陪同者最想知道的问题：「这次出门出了几次事」。
-         ★ 分两组：意外 = 已经发生的事（次数少，每个都要紧）；
-           预警 = 系统替他躲过去的事（次数多，混在一起会让"意外 8 次"
-           这种数字失去意义）。判据取 detail 里的既有字段，见 js/incidents.js。 -->
-    <section class="card incidents">
-      <div class="inc-head">
-        <h2>意外统计<small>本次会话</small></h2>
-        <button class="btn ghost sm" id="incReset">清零</button>
-      </div>
-      <dl class="inc-list">
-        <dt>意外</dt><dd id="incAccidents">无</dd>
-        <dt>预警</dt><dd id="incWarnings">无</dd>
-      </dl>
-    </section>
-
-    <!-- ---------------- 导航（第三层） ---------------- -->
+<!-- ---------------- 导航（第三层） ---------------- -->
     <section class="card">
       <h2>导航</h2>
 
@@ -225,7 +164,67 @@
       </div>
     </section>
 
-  </div>
+<!-- ---------------- 播报流（主） ---------------- -->
+    <section class="card feed-card">
+      <div class="card-head">
+        <h2>播报<small>最新的在最上面</small></h2>
+        <div class="feed-tools">
+          <div class="chips" id="filters">
+            <button class="chip on" data-min="0">全部</button>
+            <button class="chip" data-min="2">重要+</button>
+            <button class="chip" data-min="3">紧急</button>
+          </div>
+        </div>
+      </div>
+      <div class="feed" id="feed">
+        <div class="empty">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 5 6.5 9H3v6h3.5L11 19zM15.5 8.5a5 5 0 0 1 0 7" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+          <p>还没有播报</p>
+          <p class="dim">系统出声后，这里按时间倒序列出来</p>
+        </div>
+      </div>
+      <div class="row feed-foot">
+        <button class="btn ghost" id="pauseBtn">暂停播报</button>
+        <button class="btn ghost" id="clearBtn">清空</button>
+      </div>
+    </section>
+
+<!-- ---------------- 帧源（顶部固定宽度） ---------------- -->
+    <!-- ★ 放最上方是为了**演示**：让看的人一眼看到「系统在看什么」。
+         宽度固定（132px），所以不会随屏幕自适应去挤占播报流的空间 ——
+         盲人用户看不到它，它不该是主界面的一部分。
+         ★ #video / #loopBtn 的 id 不能改：app.js 一律按 id 取 DOM。 -->
+    <section class="card video-strip">
+      <div class="strip-video">
+        <video id="video" src="/data/demo.mp4" muted loop playsinline></video>
+      </div>
+      <div class="strip-main">
+        <p class="strip-title">帧源<small>demo.mp4</small></p>
+        <!-- ★ 这行是必须的，不是装饰：视频没就绪时 grabAndSend() 会静默
+             return，按钮却已变成「停止发帧」—— 看起来和后端坏了没区别。
+             素材缺失（demo.mp4 是 gitignore 的产物）是最常见的触发方式。 -->
+        <p class="mini-msg" id="frameMsg">未开始</p>
+        <button class="btn primary sm" id="loopBtn">开始发帧</button>
+      </div>
+    </section>
+
+<!-- ---------------- 意外统计（给陪同者/家属看） ----------------
+         ★ 盲人用户看不到这一屏，所以它不是产品主界面的一部分 —— 但它
+           回答的是陪同者最想知道的问题：「这次出门出了几次事」。
+         ★ 分两组：意外 = 已经发生的事（次数少，每个都要紧）；
+           预警 = 系统替他躲过去的事（次数多，混在一起会让"意外 8 次"
+           这种数字失去意义）。判据取 detail 里的既有字段，见 js/incidents.js。 -->
+    <section class="card incidents">
+      <div class="inc-head">
+        <h2>意外统计<small>本次会话</small></h2>
+        <button class="btn ghost sm" id="incReset">清零</button>
+      </div>
+      <dl class="inc-list">
+        <dt>意外</dt><dd id="incAccidents">无</dd>
+        <dt>预警</dt><dd id="incWarnings">无</dd>
+      </dl>
+    </section>
+</div>
 
   <!-- ---------------- 底部操作栏 ---------------- -->
   <!-- 底部栏：播报开关 + **求助/取消的第二个入口**（2026-09-23）。
