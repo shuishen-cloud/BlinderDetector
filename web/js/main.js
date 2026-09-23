@@ -24,6 +24,11 @@ import { count as countIncident, initIncidents } from "./incidents.js";
 initUI();
 initDev();
 initIncidents();
+// ★ 地图的启动**显式放在这里**，而不是藏在 map.js 的 IIFE 里自启 ——
+//   原先那样写，一个 `return` 就能把它变成死代码，而且**静默**：
+//   不报错，只是地图永远不出现。改成显式调用之后，启动顺序在这一处看得全，
+//   也和其他模块（initUI / initDev / initIncidents）一个写法。
+LingmouMap.init();
 
 // 先定视图再做别的 —— 免得新播报到达时版面在跳
 setDev(devFromUrl());

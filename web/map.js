@@ -472,13 +472,7 @@ const LingmouMap = (() => {
     try { window.dispatchEvent(new Event("resize")); } catch (e) { /* 忽略 */ }
   }
 
-  return { onAnnouncement, refresh };
-
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", init);
-  } else {
-    init();
-  }
+  return { init, onAnnouncement, refresh };
 })();
 
 export default LingmouMap;

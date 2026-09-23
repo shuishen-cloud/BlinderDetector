@@ -884,3 +884,30 @@ def test_nav_and_feed_are_the_first_two_cards(client):
     # 一条 .ann 约 100px，两条 + 间距 ≈ 212 —— 容一点余量
     assert 190 <= int(m.group(1)) <= 240, \
         f"播报流高度 {m.group(1)}px 不是「约两条」（应在 190–240）"
+
+
+def test_map_startup_is_explicit_not_hidden_in_the_iife(client):
+    """★ 地图的启动必须**显式**，不能藏在 IIFE 里自启。
+
+    起因（2026-09-23）：map.js 转成 ES module 时，把
+    `window.LingmouMap = {...}` 改成了 `return {...}`，于是 return 落到了
+    自启代码**之前** —— `init()` 成了死代码，地图永远不出现。
+
+    ★ 为什么别的用例查不出来：这不是链接错误（id 都在、import 都能解析），
+      是**控制流**。静态结构检查全绿，页面却什么都没有，而且不报错。
+
+    所以钉三条：init 被导出、IIFE 内没有 return 之后的启动代码、入口显式调用。
+    """
+    js = client.get("/static/map.js").text
+
+    assert re.search(r"return \{[^}]*\binit\b", js), "map.js 必须导出 init，否则没人能启动它"
+
+    iife = js[js.index("(() => {"):]
+    after_return = iife[iife.index("return {"):iife.index("})();")]
+    assert "init()" not in after_return, \
+        "return 之后还有 init() —— 那是死代码，地图会静默地不出现"
+    assert "DOMContentLoaded" not in after_return, \
+        "启动不该藏在 IIFE 里：一个 return 就能把它变成死代码"
+
+    assert "LingmouMap.init()" in client.get("/static/js/main.js").text, \
+        "入口必须显式启动地图"
