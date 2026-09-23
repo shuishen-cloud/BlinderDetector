@@ -330,19 +330,28 @@ def test_test_pieces_are_shipped_but_hidden_by_default(client):
     """★「把测试的部分藏起来」＝ `hidden`，**不是删掉**。
 
     `app.js` / `map.js` 一律按 id 取 DOM —— 元素真被删掉会当场报错，而契约
-    验证（帧源、其余路由、请求日志、统计）随时要能翻出来。所以钉两条：
+    验证（其余路由、请求日志、统计、频率旋钮）随时要能翻出来。所以钉两条：
     ① 开发者面板在页面上、且默认 hidden；② 测试件确实都关在面板里面。
 
     ★ 第 ② 条靠**位置**判断而不是靠 class：`hidden` 是浏览器行为，
     元素一旦漏到 `#devPanel` 外面（比如以后有人挪错一行），手机视图上
-    就会冒出「开始发帧」这种按钮，而上面那条 `hidden` 照样是绿的。
+    就会冒出调试按钮，而上面那条 `hidden` 照样是绿的。
+
+    ★★ 例外：`video` / `loopBtn` **有意放在手机视图里**（2026-09-22 调整）。
+       理由：手机视图默认没有任何帧源，于是第一层（感知）和第二层（安全）
+       永远不会触发 —— 打开页面看到的是一个播报流永远空着的「交付形态」。
+       视频对盲人用户没用，所以做成一张小卡片（`.video-mini`，84px 高），
+       作用是「喂帧」而不是给人看；频率旋钮仍是调试参数，留在面板里。
+
+       这条改动**推翻了本用例原先的设计意图**（原作者用 `loopBtn` 当反例），
+       故在此显式记录，免得看起来像谁挪错了行。
     """
     html = client.get("/").text
 
     assert re.search(r'id="devPanel"[^>]*\shidden', html), "开发者面板必须默认隐藏"
 
     panel = html.index('id="devPanel"')
-    for el in ("loopBtn", "perMs", "dropzone", "logTail", "stFrames"):
+    for el in ("perMs", "dropzone", "logTail", "stFrames"):
         assert html.index(f'id="{el}"') > panel, f"{el} 是测试件，应该关在开发者面板里"
 
     # 手机视图得留着产品功能：播报开关、播报流、导航、一键求助
@@ -519,3 +528,119 @@ def test_homepage_includes_the_map_panel(client):
     # ★ 顺序要紧：map.js 只注册入口，app.js 加载时就 connect()，所以 map.js 在后
     assert html.index("/static/app.js") < html.index("/static/map.js")
 
+
+
+def test_phone_view_has_a_frame_source(client):
+    """★ 手机视图必须自己能喂帧，否则第一、二层永远不会触发。
+
+    没有帧源 = 播报流永远空着 —— 交付形态看起来就是个坏掉的应用。
+    视频做小（84px 一条）是因为盲人用户看不到画面，但它必须在。
+    """
+    html = client.get("/").text
+    phone = html.index('id="app"')
+    panel = html.index('id="devPanel"')
+
+    for el in ("video", "loopBtn"):
+        pos = html.index(f'id="{el}"')
+        assert phone < pos < panel, f"{el} 应该在手机视图里（帧源），不该只在开发者面板"
+    assert "/data/demo.mp4" in html, "帧源要指向 demo.mp4"
+
+
+def test_frame_source_has_visible_status(client):
+    """★ 帧源必须有可见状态，不能静默失效。
+
+    `grabAndSend()` 在视频没就绪时会直接 return —— 按钮已经变成「停止发帧」，
+    页面看起来正常，实际一帧都没发出去，和后端坏了长得一模一样。
+    实测（worktree 里缺 demo.mp4）：`POST /v1/frame` 收到 0 次，
+    而请求日志在开发者面板里、默认看不见，所以手机视图必须自己说出来。
+
+    这条用例钉住「反馈元素存在且和帧源在同一张卡片里」——
+    以后谁把它删了，这里会红。
+    """
+    html = client.get("/").text
+    phone, panel = html.index('id="app"'), html.index('id="devPanel"')
+
+    assert 'id="frameMsg"' in html, "帧源卡片必须有状态反馈元素"
+    pos = html.index('id="frameMsg"')
+    assert phone < pos < panel, "状态反馈要在手机视图的帧源卡片里，不能只在开发者面板"
+    # 和帧源在同一张卡片内（在 video 之后、卡片结束之前）
+    assert html.index('id="video"') < pos, "状态行应跟在视频之后"
+
+
+def test_emergency_is_dismissible_by_tapping_anywhere(client):
+    """★ 紧急全屏必须能点**任意位置**关掉，而且要把这件事**说出来**。
+
+    看不见屏幕的用户很难命中一个小按钮。`#emg` 铺满全屏（position:fixed;
+    inset:0）且绑了 onclick，所以点黑暗区域任何位置都能关 —— 但空黑区域
+    看起来不可点，没人会去试。所以本用例同时钉两件事：
+    ① JS 里那个绑定还在（少了它就只剩一个孤零零的小按钮）；
+    ② 页面上写明了这件事。
+    """
+    html = client.get("/").text
+    assert 'id="emg"' in html and 'id="emgOk"' in html
+
+    pos = html.index('id="emg"')
+    assert "任意位置" in html[pos:pos + 900], "紧急层必须写明「点任意位置也能关闭」"
+
+    js = client.get("/static/app.js").text
+    assert 'emg").onclick' in js, "遮罩本身必须绑关闭，否则只能点那个小按钮"
+
+
+def test_phone_feed_scrolls_internally(client):
+    """★ 手机视图的播报流是**定长 + 内滚**，不能无限撑长整页。
+
+    放开内滚时，每 600ms 一条、只增不减的播报会把导航 / 地图 / 帧源
+    一路往下推 —— 想滚到那几张卡反而越来越难。这正是它被改回来的原因。
+    """
+    css = client.get("/static/app.css").text
+    i = css.index(".phone .feed")
+    block = css[i:i + css[i:].index("}")]
+
+    assert "max-height" in block, "播报流必须定长，否则整页会被越撑越长"
+    assert "overflow-y: auto" in block, "播报流必须能上下滑动查看"
+    assert "overscroll-behavior: contain" in block, "内滚到底不该把整页也带着滚"
+
+
+def test_video_strip_is_at_top_with_fixed_width(client):
+    """帧源放最上方是**给演示看的**（一眼看到系统在看什么）。
+
+    但宽度必须固定：盲人用户看不到画面，它不该随屏幕自适应去挤占播报流。
+    """
+    html = client.get("/").text
+    strip, feed = html.index('class="card video-strip"'), html.index('class="card feed-card"')
+    assert strip < feed, "帧源条要在播报流之前（最上方）"
+
+    css = client.get("/static/app.css").text
+    blk = css[css.index(".strip-video {"):]
+    blk = blk[:blk.index("}")]
+    assert "132px" in blk, "视频要固定宽度，不能自适应"
+
+
+def test_map_fold_does_not_use_details_tag(client):
+    """★ 地图默认收起，但**不能用 `<details>` 折叠**。
+
+    地图容器必须有显式的布局高度，否则百度 GL **静默不渲染** —— 既不抛
+    异常也不报错（app.css 的 .map-stage 注释记着这个坑）。而 `<details>`
+    关闭时内容是 `display:none`：容器高度为 0，正好命中它。
+
+    所以折叠必须走 `max-height`。这条用例钉的是「以后谁把它改回
+    `<details>`，会红」—— 否则地图会不声不响地白掉，很难查。
+    """
+    html = client.get("/").text
+    assert 'data-fold' in html, "折叠开关要有 data-fold（app.js 靠它绑事件）"
+
+    # 地图不能在未闭合的 <details> 里。
+    # ★ 先剥掉注释再数：注释里提到 `<details>` 是常事（这段代码自己就提了
+    #   两次），不剥的话计数会被自己的说明文字带偏 —— 第一版就栽在这。
+    body = re.sub(r"<!--.*?-->", "", html, flags=re.S)
+    before = body[:body.index('id="map"')]
+    assert before.count("<details") == before.count("</details>"), \
+        "地图不能在 <details> 里 —— display:none 会让 GL 静默不渲染"
+
+    css = client.get("/static/app.css").text
+    blk = css[css.index(".fold-body {"):]
+    blk = blk[:blk.index("}")]
+    assert "max-height" in blk and "overflow: hidden" in blk, \
+        "折叠要用 max-height + overflow，不能 display:none"
+    # 展开后要能容下地图（220px）+ 说明文字
+    assert "max-height: 0" in blk, "默认应该是收起的"

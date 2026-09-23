@@ -166,13 +166,49 @@ function gateSummary(b) {
 const video = $("video");
 const canvas = document.createElement("canvas");
 
+/* 帧源的状态反馈。
+ * ★ 为什么必须有：`grabAndSend()` 在视频没就绪时会**静默 return** ——
+ *   按钮已经变成「停止发帧」，页面看起来一切正常，实际一帧都没发出去。
+ *   这跟「后端坏了」长得一模一样。实测（worktree 里缺 demo.mp4）：
+ *   `POST /v1/frame` 收到 **0 次**，而日志里只有几条 /data 404。
+ *   最常见的原因就是素材没生成 —— 它是 gitignore 的产物。
+ */
+let frameWarn = "";
+
+function setFrameMsg(text, warn = false) {
+  const el = $("frameMsg");
+  if (!el || el.textContent === text) return;  // 去重：别每 600ms 刷一次 DOM
+  el.textContent = text;
+  el.classList.toggle("warn", warn);
+}
+
+function onVideoBroken() {
+  frameWarn = "视频加载失败 —— 先跑 python scripts/make_test_video.py 生成 data/demo.mp4";
+  setFrameMsg(frameWarn, true);
+}
+
+video.addEventListener("error", onVideoBroken);
+// 404 时 <video> 的 error 事件在有些浏览器不冒出来，补一次显式探测
+fetch(video.getAttribute("src"), { method: "HEAD" })
+  .then((r) => { if (!r.ok) onVideoBroken(); })
+  .catch(() => {});
+
 async function grabAndSend(source) {
-  if (!video.videoWidth || video.paused) return;
+  if (!video.videoWidth || video.paused) {
+    if (!frameWarn) {           // 只报一次，别每拍刷屏
+      frameWarn = "视频未就绪，这一拍跳过";
+      setFrameMsg(frameWarn, true);
+    }
+    return;
+  }
+  frameWarn = "";               // 恢复了，警告撤掉
   canvas.width = video.videoWidth;
   canvas.height = video.videoHeight;
   canvas.getContext("2d").drawImage(video, 0, 0);
   const blob = await new Promise((res) => canvas.toBlob(res, "image/jpeg", 0.8));
-  if (blob) await sendFrame(blob, source);
+  if (!blob) return;
+  await sendFrame(blob, source);
+  if (loopTimer) setFrameMsg(`已发 ${stats.frames} 帧`);
 }
 
 function toggleLoop() {
@@ -183,11 +219,17 @@ function toggleLoop() {
     loopTimer = null;
     btn.textContent = "开始发帧";
     btn.classList.remove("running");
+    setFrameMsg(frameWarn || "未开始", !!frameWarn);
     log("已停止发帧", "dim");
     return;
   }
 
-  video.play().catch(() => {});
+  frameWarn = "";
+  video.play().catch((e) => {
+    frameWarn = `视频无法播放（${e.name}）`;
+    setFrameMsg(frameWarn, true);
+  });
+  setFrameMsg(`已发 ${stats.frames} 帧`);
   const per = Math.max(200, +$("perMs").value || 2000);
   const saf = Math.max(100, +$("safMs").value || 600);
 
@@ -202,6 +244,19 @@ function toggleLoop() {
 }
 
 $("loopBtn").onclick = toggleLoop;
+
+// 折叠区（地图等）。★ 用 max-height 而不是 <details>：<details> 关闭时
+// 内容 display:none，地图容器没有布局高度，百度 GL 会静默不渲染。
+document.querySelectorAll("[data-fold]").forEach((head) => {
+  head.onclick = () => {
+    const box = head.closest(".fold");
+    if (!box) return;
+    const open = box.classList.toggle("open");
+    head.setAttribute("aria-expanded", open ? "true" : "false");
+    // 展开后再让地图量一次 —— 它是在折叠状态下初始化的
+    if (open) window.LingmouMap?.refresh?.();
+  };
+});
 
 // =====================================================================
 // 帧源 ③ 单张 / 多张图片

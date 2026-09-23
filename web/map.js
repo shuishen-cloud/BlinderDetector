@@ -462,7 +462,17 @@
     }
   }
 
-  window.LingmouMap = { onAnnouncement };
+  /* 折叠展开后调用：容器尺寸变了，让 GL 重新量一次。
+     ★ 地图是在「折叠状态」下初始化的（容器被 max-height 压住），
+       展开后必须让它重新测量，否则可能一直画不出来 —— 和容器高度为 0
+       导致静默不渲染是同一类问题，只是更隐蔽。 */
+  function refresh() {
+    try { if (map && typeof map.resize === "function") map.resize(); } catch (e) { /* 忽略 */ }
+    // 兜底：某些版本只对窗口 resize 有反应
+    try { window.dispatchEvent(new Event("resize")); } catch (e) { /* 忽略 */ }
+  }
+
+  window.LingmouMap = { onAnnouncement, refresh };
 
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", init);

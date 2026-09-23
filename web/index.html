@@ -78,6 +78,25 @@
 
   <div class="screen">
 
+    <!-- ---------------- 帧源（顶部固定宽度） ---------------- -->
+    <!-- ★ 放最上方是为了**演示**：让看的人一眼看到「系统在看什么」。
+         宽度固定（132px），所以不会随屏幕自适应去挤占播报流的空间 ——
+         盲人用户看不到它，它不该是主界面的一部分。
+         ★ #video / #loopBtn 的 id 不能改：app.js 一律按 id 取 DOM。 -->
+    <section class="card video-strip">
+      <div class="strip-video">
+        <video id="video" src="/data/demo.mp4" muted loop playsinline></video>
+      </div>
+      <div class="strip-main">
+        <p class="strip-title">帧源<small>demo.mp4</small></p>
+        <!-- ★ 这行是必须的，不是装饰：视频没就绪时 grabAndSend() 会静默
+             return，按钮却已变成「停止发帧」—— 看起来和后端坏了没区别。
+             素材缺失（demo.mp4 是 gitignore 的产物）是最常见的触发方式。 -->
+        <p class="mini-msg" id="frameMsg">未开始</p>
+        <button class="btn primary sm" id="loopBtn">开始发帧</button>
+      </div>
+    </section>
+
     <!-- ---------------- 播报流（主） ---------------- -->
     <section class="card feed-card">
       <div class="card-head">
@@ -137,16 +156,34 @@
         </p>
       </details>
 
-      <div class="map-stage">
-        <div id="map"></div>
-        <svg id="map-svg" hidden aria-label="路线示意图"></svg>
-        <p class="map-msg" id="map-msg">正在准备地图…</p>
+      <!-- 地图默认**收起**（2026-09-23 调整）。
+           ★ 它占 220px，而交给它的用户根本看不到屏幕 —— 目标用户用不上，
+             只有陪同者与答辩演示需要。省下的空间全给上面的播报流。
+           ★ 折叠用 `max-height` 而**不是** `<details>`：`<details>` 关闭时
+             内容 display:none，地图容器就没有布局高度，百度 GL 会**静默
+             不渲染**（正是 app.css 里 .map-stage 注释警告的那个坑）。
+             max-height 折叠会让容器一直保有布局高度，GL 量得到尺寸。 -->
+      <div class="fold" id="mapFold">
+        <button class="fold-head" type="button" data-fold
+                aria-expanded="false" aria-controls="mapBody">
+          <i class="chev" aria-hidden="true"></i>
+          <span>路线地图</span>
+          <small id="map-src">准备中…</small>
+        </button>
+        <div class="fold-body" id="mapBody">
+          <div class="map-stage">
+            <div id="map"></div>
+            <svg id="map-svg" hidden aria-label="路线示意图"></svg>
+            <p class="map-msg" id="map-msg">正在准备地图…</p>
+          </div>
+          <p class="hint">
+            底图来自百度 JSAPI GL（CDN 加载）。<b>断网或没配 <code>BAIDU_BROWSER_AK</code>
+            时退回无底图示意图</b>，几何仍然是真的。
+          </p>
+        </div>
       </div>
-      <p class="hint">
-        底图来自百度 JSAPI GL（CDN 加载）。<b>断网或没配 <code>BAIDU_BROWSER_AK</code>
-        时退回无底图示意图</b>，几何仍然是真的。
-      </p>
     </section>
+
   </div>
 
   <!-- ---------------- 底部操作栏 ---------------- -->
@@ -170,6 +207,10 @@
     <p class="emg-k">紧急</p>
     <p class="emg-txt" id="emgText"></p>
     <button class="btn emg-ok" id="emgOk">我知道了</button>
+    <!-- ★ 必须写出来：`#emg` 铺满全屏且已绑了 onclick（app.js），
+         点黑暗区域任意位置都能关 —— 但空黑区域看起来不可点，没人会去试。
+         对看不见屏幕的用户，这条提示更是唯一的线索。 -->
+    <p class="emg-hint">点屏幕<b>任意位置</b>也能关闭</p>
   </div>
 </div>
 
@@ -197,12 +238,12 @@
     <div class="col">
 
       <section class="card">
-        <h2><span class="idx">①</span>视频抽帧<small>本期测试用</small></h2>
-        <div class="video-wrap">
-          <video id="video" src="/data/demo.mp4" muted loop playsinline controls></video>
-        </div>
+        <h2><span class="idx">①</span>发帧频率<small>视频帧源已移到手机视图</small></h2>
+        <p class="hint">
+          视频与「开始发帧」在<b>手机视图</b>里 —— 帧必须流起来、播报才有内容，
+          那是交付形态的一部分。这里只留频率旋钮：调试参数不该出现在交付界面上。
+        </p>
         <div class="row">
-          <button class="btn primary" id="loopBtn">开始发帧</button>
           <label class="field">感知<input type="number" id="perMs" value="2000" min="200" step="100"><span>ms</span></label>
           <label class="field">安全<input type="number" id="safMs" value="600" min="100" step="100"><span>ms</span></label>
         </div>

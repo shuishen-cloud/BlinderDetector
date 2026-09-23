@@ -182,6 +182,50 @@ code {
 }
 video { display: block; width: 100%; }
 
+/* 顶部帧源条（2026-09-23）。
+   ★ 放在最上方是为了**演示** —— 看的人一眼看到「系统在看什么」。
+   ★ 视频**固定宽度**（132px）：盲人用户看不到它，所以它不该随屏幕自适应
+     去挤占播报流的空间；固定宽度就锁死了它的分量。 */
+.video-strip { display: flex; align-items: center; gap: 12px; }
+.strip-video { flex: 0 0 132px; width: 132px; }
+.strip-video video {
+  width: 132px; height: 88px; object-fit: cover;
+  border-radius: 8px; border: 1px solid var(--line); background: #000;
+}
+.strip-main { flex: 1; min-width: 0; }
+.strip-title { margin: 0 0 4px; font-size: 13.5px; font-weight: 600; }
+.strip-title small { margin-left: 6px; font-size: 11px; color: var(--dim); font-weight: 400; }
+.strip-main .mini-msg { margin: 0 0 6px; }
+.btn.sm { padding: 5px 12px; font-size: 12px; }
+
+/* ===================== 折叠区（2026-09-23） =====================
+   ★ 用 `max-height` 折叠，**不要换成 `<details>`**：`<details>` 关闭时
+     内容是 display:none，里面的地图容器就没有布局高度，百度 GL 会
+     **静默不渲染** —— 正是 .map-stage 那段注释警告的坑。
+     max-height 折叠会让内容一直保有布局高度，GL 量得到尺寸。 */
+.fold { margin-top: 12px; border-top: 1px solid var(--line); padding-top: 4px; }
+.fold-head {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  background: none; border: 0; padding: 8px 0; cursor: pointer;
+  font: inherit; font-size: 13.5px; color: var(--fg); text-align: left;
+}
+.fold-head small { margin-left: auto; color: var(--dim); font-size: 11.5px; }
+.fold-head .chev {
+  width: 7px; height: 7px; flex: 0 0 7px;
+  border-right: 2px solid var(--dim); border-bottom: 2px solid var(--dim);
+  transform: rotate(-45deg); transition: transform .2s ease;
+}
+.fold.open .chev { transform: rotate(45deg); }
+.fold-body { max-height: 0; overflow: hidden; transition: max-height .28s ease; }
+.fold.open .fold-body { max-height: 760px; }
+.fold-body .map-stage { margin-top: 8px; }
+
+.mini-msg {
+  margin: 8px 0 0; font-size: 11.5px; color: var(--dim);
+  font-variant-numeric: tabular-nums;
+}
+.mini-msg.warn { color: var(--warn, #f0a020); }
+
 .placeholder, .dropzone {
   display: flex; flex-direction: column; align-items: center; gap: 6px;
   padding: 18px 14px; border-radius: 11px; text-align: center;
@@ -402,7 +446,22 @@ video { display: block; width: 100%; }
 .phone .card { padding: 15px 15px 16px; }
 .phone .card h2 { font-size: 14.5px; }
 .phone .hint { font-size: 12.5px; }
-.phone .feed { max-height: none; overflow: visible; padding-right: 0; }
+/* ★ 播报流在手机视图里改成**定长 + 内滚**（2026-09-22 调整）。
+   原设计是放开内滚、让整页滚（理由见上面的注释：内滚+外滚叠加难用）。
+   但实际用下来那个理由不成立：播报每 600ms 一条、只增不减，整页被越撑越长，
+   导航 / 地图 / 帧源几张卡被一路往下推 —— 想滚到它们反而越来越难。
+   所以改成定长内滚：播报流是一块**稳定的区域**，其余卡片位置不再漂移。
+   `overscroll-behavior: contain` 正面解决原作者担心的滚动手势串台：
+   在播报流里滚到底，不会再把整页带着一起滚。 */
+.phone .feed {
+  /* ★ 吃掉剩余空间而不是写死一个高度（2026-09-23）。
+     写死会出现两种难看：屏大时下面留一大块空白，屏小时又不够看。
+     所以给区间而不是定值 —— 下限保证能同时看到几条，上限保证
+     导航卡与底部按钮不被顶出屏幕。地图收起后腾出的空间正好给它。 */
+  flex: 1 1 auto; min-height: 34vh; max-height: 56vh;
+  overflow-y: auto; padding-right: 4px;
+  overscroll-behavior: contain;
+}
 .phone .ann .txt { font-size: 16.5px; }
 /* 最新一条读起来最响 —— 播报流是这条产品的主界面 */
 .phone .feed > .ann:first-child { border-color: var(--line-2); }
@@ -485,10 +544,14 @@ video { display: block; width: 100%; }
 .emg-in { width: 100%; max-width: 520px; text-align: center; }
 .emg-k { margin: 0 0 12px; font-size: 12.5px; letter-spacing: .34em; color: #ffd7dd; }
 .emg-txt { margin: 0 0 28px; font-size: 26px; line-height: 1.45; font-weight: 650; color: #fff; }
+/* 紧急时刻手是抖的，触控目标要给足 —— 所以按钮做宽、做高，
+   并且整块遮罩都可点（见 app.js: $("emg").onclick）。 */
 .emg-ok {
-  min-height: 50px; padding: 0 32px; font-size: 16px;
+  min-height: 56px; width: 100%; max-width: 360px;
+  font-size: 17px; font-weight: 600;
   background: rgba(255, 255, 255, .14); border-color: rgba(255, 255, 255, .32);
 }
+.emg-hint { margin: 16px 0 0; font-size: 12.5px; color: rgba(255, 255, 255, .62); }
 @keyframes fade-in { from { opacity: 0; } }
 
 /* ===================== 轻提示 ===================== */
