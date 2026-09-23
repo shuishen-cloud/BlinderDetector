@@ -911,3 +911,49 @@ def test_map_startup_is_explicit_not_hidden_in_the_iife(client):
 
     assert "LingmouMap.init()" in client.get("/static/js/main.js").text, \
         "入口必须显式启动地图"
+
+
+def test_layer_failure_degrades_instead_of_500(client):
+    """★ 层跑挂时必须是「200 + 显式降级通告」，不能是 500，更不能静默。
+
+    真实 VLM 一定会失败（超时/限流/欠费）。原始实现让异常冒到 Starlette，
+    客户端拿到 500 且一条播报都没有 —— 用户听到的是安静，
+    而安静会被理解成「环境安全」。
+    """
+    layer = client.app.state.layers["safety"]
+
+    async def boom(frame):
+        raise RuntimeError("VLM 超时")
+
+    layer.handle = boom
+
+    with client.websocket_connect("/v1/stream") as ws:
+        assert ws.receive_json()["type"] == "hello"
+
+        r = client.post("/v1/safety/analyze", json={"frame_id": "x", "ts": 1})
+
+        assert r.status_code == 200, "层失败不该变成 500"
+        body = r.json()
+        assert body["announcements"] == []
+        assert "RuntimeError" in body.get("degraded", "")
+
+        msg = ws.receive_json()
+        assert msg["type"] == "announcement"
+        assert msg["data"]["source"] == "system", "降级必须出声"
+        assert msg["data"]["text"]
+
+
+def test_vlm_unavailable_is_treated_as_degraded(client):
+    """VLM 明确报不可用（VLMUnavailable）走同一条降级路径"""
+    from app.core.providers.openai_compat import VLMUnavailable
+
+    class DownVLM:
+        async def describe_frame(self, frame, image):
+            raise VLMUnavailable("VLM 返回 429")
+
+    layer = client.app.state.layers["perception"]
+    layer.vlm = DownVLM()
+
+    r = client.post("/v1/perception/describe", json={"frame_id": "x", "ts": 1})
+    assert r.status_code == 200
+    assert r.json().get("degraded")

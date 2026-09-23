@@ -19,10 +19,9 @@
     POST /v1/emergency/tick        推进紧急状态机时钟
     POST /v1/frame                 ★ 统一帧入口（multipart 上传图像）
     GET  /v1/health                健康检查 + 降级状态
-    GET  /v1/frontend-config       调试台地图要的浏览器端 AK（从 .env 下发）
     WS   /v1/stream                统一播报下发
     GET  /                         前端调试台
-    GET  /static/*                 调试台的 css / js / 地图面板
+    GET  /static/*                 调试台的 css / js
     GET  /data/*                   测试素材（demo.mp4 / frames）
 
 启动：
@@ -59,7 +58,10 @@ def create_app() -> Starlette:
 
     hub = Hub()
     arbiter = Arbiter()
-    envelope = Envelope(hub, arbiter)
+    # 降级通告接进信封：任何一层抛异常都会推一条 source=system 的播报，
+    # 而不是让用户面对一片安静（见 envelope.respond 的注释）。
+    announce_degraded = make_degraded_announcer(hub)
+    envelope = Envelope(hub, arbiter, on_degraded=announce_degraded)
     layers = {name: registry.get("layer", name) for name in LAYER_NAMES}
 
     # 上传帧要落盘，目录得先存在（fresh clone 时 data/ 整个都不在）
@@ -75,7 +77,7 @@ def create_app() -> Starlette:
     app.state.hub = hub
     app.state.arbiter = arbiter
     app.state.layers = layers
-    app.state.broadcast_degraded = make_degraded_announcer(hub)
+    app.state.broadcast_degraded = announce_degraded
     return app
 
 
