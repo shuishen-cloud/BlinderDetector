@@ -862,8 +862,13 @@ def test_tts_switch_drives_the_screen_reader_channel(client):
         "初始（TTS 默认开）aria-live 必须是 off"
 
     js = client.get("/static/js/ui.js").text
-    assert re.search(r'\$\("feed"\)\.setAttribute\("aria-live",\s*on \? "off" : "polite"\)', js), \
-        "aria-live 必须由 setTts() 跟着开关联动，不能写死"
+    assert re.search(r'\$\("feed"\)\.setAttribute\("aria-live",\s*live \? "off" : "polite"\)', js), \
+        "aria-live 必须由开关联动，不能写死"
+    # ★ 2026-09-23：那个 `live` 不是 ttsOn 本身，而是「ttsOn 且**念得出来**」——
+    #   浏览器没有语音 API / 没有中文嗓音时，开关开着也发不出声，此刻读屏
+    #   必须是打开的（polite），否则用户什么都听不到。见下一条。
+    assert re.search(r"const live = state\.ttsOn && !dead", js), \
+        "live 要同时看开关和「念得出来」，否则按钮和读屏会一起哑掉"
 
 
 def test_sound_switch_carries_three_redundant_cues(client):
@@ -892,8 +897,151 @@ def test_sound_switch_carries_three_redundant_cues(client):
         "关掉时别把两个图标同时显示出来"
 
     js = client.get("/static/js/ui.js").text
-    assert '$("ttsTxt").textContent = on ? "声音：开" : "声音：关"' in js, \
-        "按钮上的文字要跟着状态变"
+    assert '"声音：不可用"' in js, "念不出来时按钮必须如实写「不可用」，不能假绿"
+    assert '"声音：开"' in js and '"声音：关"' in js, "开关两态的文字都要在"
+
+
+# --------------------------------------------------------------------------
+# 播报出口的端侧那一半（2026-09-23）—— 队列 / 抢占 / 语速 / 可用性
+# --------------------------------------------------------------------------
+
+
+def test_speech_queue_never_lets_the_ear_fall_behind(client):
+    """★ 端侧必须做**抢占**和**积压保护** —— 这是 design.md D11 划过来的活。
+
+    D11 把「排序、打断、积压保护、到期不补播」明确划给端侧（服务端看不到
+    喇叭，模拟播放状态连出过两个「永久静默」的 bug，那套状态机被拆掉了）。
+    而在此之前，前端只是无条件 `speechSynthesis.speak()`，契约里的
+    `priority` / `interrupt` 只被当文本写进了 meta 标签 —— 划过来的活没人干。
+
+    ★ 为什么这不是优化而是修 bug：中文 TTS 约 250ms/字（D5 自己算的），一条
+      15 字的播报念 3.7 秒；播报按场景节奏来，两秒内来两条是常事。无条件排队
+      的后果是队列**单调增长**，用户听到的是十几秒前的那个**位置** —— 人已经
+      走过去了。听见错的，比什么都没听见更坏。
+    """
+    js = client.get("/static/js/speech.js").text
+
+    assert "synth.cancel()" in js, "抢占/清积压必须真的 cancel，光跳过没用"
+    assert re.search(r"const urgent = priority >= 3 \|\| interrupt", js), \
+        "p3 与 interrupt 是契约里「这条更急」的判据，必须照它判"
+    assert re.search(r"pending > MAX_PENDING", js), "要有个积压上限，否则队列没有天花板"
+    assert js.count("dropped += pending") == 2, \
+        "两条路都要记账：抢占丢的和清积压丢的，都要能查出来丢了几条"
+    assert "u.rate = rate" in js, "语速要真的传到 utterance 上"
+
+
+def test_speech_availability_is_probed_and_told_honestly(client):
+    """★ 念不出来必须**说出去**，不能亮着「声音：开」装安静。
+
+    起因：原来 `speak()` 第一句就是 `if (!window.speechSynthesis) return;` ——
+    浏览器没有语音 API、或系统一个中文嗓音都没有时，页面照常显示「声音：开」，
+    却一点声都不出。这是本项目最不能接受的假绿：用户会把「系统没说话」理解成
+    「环境安全」。
+
+    ★ 为什么不能一探不到就宣判：Chrome 首次 `getVoices()` **一定是空的**，
+      要等 `voiceschanged`。当场宣判「没有中文语音」是冤枉它，用户会去修一个
+      根本没坏的东西。所以要有等待上限，超时才算探不到。
+    """
+    js = client.get("/static/js/speech.js").text
+
+    assert '"no-api"' in js and '"no-voice"' in js, \
+        "「浏览器没这个能力」和「系统里没有中文嗓音」是两件事，要分开报"
+    assert "voiceschanged" in js, "首次 getVoices() 是空的，要等 voiceschanged"
+    assert re.search(r"const VOICES_TIMEOUT_MS = \d+", js), "要有等待上限，否则永远探不出来"
+    assert "speechUnavailable()" in js
+
+    ui = client.get("/static/js/ui.js").text
+    assert '"声音：不可用"' in ui, "探不到就得改按钮上的字"
+    assert "initSpeech()" in ui, "开机要自检一次"
+
+
+def test_a_local_note_goes_out_on_every_channel(client):
+    """★ 本地播报（断网、降级）要走**同一条**路：TTS、读屏、播报流。
+
+    只改那枚小药丸是不够的 —— 对看不见屏幕的人，「断开」和「一切正常、只是
+    暂时没人说话」长得一模一样，而前者意味着系统已经瞎了。
+
+    ★ 走 paint() 而不是直接 speak()：paint 会把它插进播报流，于是
+      ① TTS 念；② TTS 关掉时 feed 的 aria-live 交给读屏念；③ 它留在流里
+      能被翻回来。三个通道说的是同一句话。
+    ★ 不受 filterMin 影响：把墙筛成「只看紧急」是选择不看次要播报，
+      不是选择不知道系统哑了。
+    """
+    js = client.get("/static/js/ui.js").text
+
+    assert "export function localNote(" in js, "要有本地播报这条出口"
+    block = js[js.index("export function localNote("):]
+    block = block[:block.index("\n}")]
+    assert "paint(a, true)" in block, "本地播报必须插进播报流（true = 不受筛选影响）"
+    assert "SOURCE_SYSTEM" in block, "来源记成 system，读屏和颜色才归得对"
+    assert "state.paused" in block, "暂停是「别往墙上贴」，不是「别记下来」"
+
+
+def test_disconnect_is_spoken_once_and_recovery_reports_the_gap(client):
+    """★ 断连要出声，但要**有迟滞**、只说一次，恢复时还要说断了多久。
+
+    起因：`onStatus` 一直只改圆点颜色和那行小字。而断线自愈是 2 秒一轮，
+    `onStatus(false)` 会被反复调用 —— 直接出声就会刷屏，用户三遍之后开始
+    无视它，真出事那次也不会听了。
+
+    ★ 「恢复了」必须说，而且要带秒数：只说断不说恢复，用户会一直以为系统
+      哑着；而断过又好了意味着中间那几秒的播报**是缺的** —— 不能让他以为
+      自己听到了全程。
+    ★ 首次连上之前不算「断开」：那是还没开始，这时候喊「网络断开」是假消息。
+    """
+    js = client.get("/static/js/main.js").text
+
+    assert re.search(r"const LOST_GRACE_MS = \d+", js), "断连播报要有迟滞窗口"
+    assert "lostTimer = setTimeout(" in js, "迟滞靠定时器，不是靠计数器"
+    assert re.search(r"if \(!everConnected \|\| lostAt\) return;", js), \
+        "已经报过就别重复报 —— 重连循环会一直把它调回来"
+    assert "网络断开" in js and "网络已恢复" in js
+    assert re.search(r"刚才断开的 \$\{back\} 秒", js), "恢复时要如实说出断了多久"
+    assert "everConnected" in js, "首次连上之前不该报「断开」"
+
+
+def test_safety_buttons_acknowledge_before_the_network_round_trip(client):
+    """★ 生死按钮按下就有回执，不能等网络回来。
+
+    起因：一键求助只有「请求返回之后」那一次确认，中间是**一整个网络往返**，
+    弱网下几秒起步。这几秒里用户完全不知道按上没有 —— 他只会再按一次，
+    或者更糟：以为按上了，站在原地等。
+
+    ★ 判据是**顺序**：回执要排在 `await postJson(...)` **之前**。
+      写在后面就等于没有（那时候返回值都回来了）—— 这类「顺序错了但语法对」
+      的缺陷，静态检查之外看不出来，所以这里钉的是先后位置。
+    """
+    js = client.get("/static/js/dev.js").text
+
+    assert "PRESS_ACK" in js, "生死按钮要有「按下即回执」那张表"
+    assert '"/v1/emergency/sos"' in js.split("PRESS_ACK")[1][:400], "求助要在表里"
+    assert '"/v1/safety/fall"' in js.split("PRESS_ACK")[1][:400], "跌倒信号也要"
+
+    ack = js.index("speak(ack, {")
+    post = js.index("await postJson(path, body)")
+    assert ack < post, "回执必须在网络往返**之前** —— 写在后面等于没有"
+    assert 'haptic("long")' in js[ack - 200:ack + 200], "手也要给一次（喇叭哑了时它是唯一通道）"
+
+
+def test_degradation_is_announced_on_change_not_on_every_poll(client):
+    """★ 降级要出声，但**只在变化那一刻**。
+
+    健康检查每 5 秒轮一次。每条都念一遍就是刷屏 —— 用户三遍之后开始无视它，
+    真出事那次也不会听了。所以只在「变坏 / 变好」的边沿出声，而且要说清
+    降到哪去了（光说「降级」等于没说）。
+
+    ★ 首次探测不下结论：页面刚打开时系统本来就是那个样子，这时候喊
+      「系统降级」是假消息 —— 用户会以为刚刚出事。
+    ★ 「连不上」那一支**刻意不出声**：同一件事 WS 那条路已经说过一次
+      （见 main.js），一件事报两遍，用户会以为出了两个问题。
+    """
+    js = client.get("/static/js/dev.js").text
+
+    assert "lastHealthBad" in js, "要记住上一次的结论，否则没法只报变化"
+    assert re.search(r"if \(was !== null && was !== bad\)", js), \
+        "只在边沿出声：首探（null）不算变化"
+    assert "系统降级" in js and "系统已恢复正常" in js
+    assert "lastHealthBad = null" in js, "初值必须是 null（还没探过）"
 
 
 def test_source_tag_never_repeats_the_priority_tag(client):
@@ -972,6 +1120,7 @@ def test_status_pills_name_themselves_for_screen_readers(client):
 #: 而放它过等于把这条安全网拆掉。
 PAGE_JS = {
     "/": ["/static/js/dom.js", "/static/js/state.js", "/static/js/log.js",
+          "/static/js/speech.js",
           "/static/js/net.js", "/static/js/ui.js", "/static/js/dev.js",
           "/static/js/main.js", "/static/map.js"],
     "/static/sender.html": ["/static/js/sender.js", "/static/js/dom.js",

@@ -100,18 +100,21 @@ body {
 
 .btn {
   font: inherit; font-size: 12.5px; color: var(--fg); cursor: pointer;
-  padding: 6px 13px; border-radius: 9px;
+  padding: 6px 13px; border-radius: 11px;
   background: var(--surface-2); border: 1px solid var(--line-2);
+  /* 一道顶部内高光：让平面按钮看起来是「一块」而不是一个矩形色块。 */
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .05);
   transition: border-color .15s, background .15s, transform .06s;
 }
 .btn:hover:not(:disabled) { border-color: rgba(91, 157, 255, .55); background: rgba(91, 157, 255, .1); }
-.btn:active:not(:disabled) { transform: translateY(1px); }
+.btn:active:not(:disabled) { transform: translateY(1px) scale(.99); }
 .btn:disabled { opacity: .4; cursor: not-allowed; }
 .btn.ghost { background: transparent; }
 .btn.primary {
   color: #fff; border-color: transparent;
   background: linear-gradient(135deg, var(--accent), var(--accent-2));
-  box-shadow: 0 8px 20px -12px rgba(91, 157, 255, .9);
+  box-shadow: 0 8px 20px -12px rgba(91, 157, 255, .9),
+              inset 0 1px 0 rgba(255, 255, 255, .22);
 }
 .btn.running { background: linear-gradient(135deg, #f43f5e, #fb7185); }
 
@@ -160,8 +163,11 @@ main {
 
 .card {
   padding: 15px 17px 17px; border-radius: var(--r);
-  background: var(--surface); border: 1px solid var(--line);
-  box-shadow: var(--shadow);
+  /* 极淡的自上而下渐变 + 一道顶部内高光：同样的颜色，但卡片有了厚度。
+     对比度一点没动（这两层都在亮侧，只会把文字衬得更清楚）。 */
+  background: linear-gradient(180deg, rgba(255, 255, 255, .045), rgba(255, 255, 255, .018));
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow), inset 0 1px 0 rgba(255, 255, 255, .04);
 }
 .card > h2, .card-head h2 {
   display: flex; align-items: center; gap: 8px; margin: 0 0 13px;
@@ -290,10 +296,13 @@ video { display: block; width: 100%; }
   font: inherit; font-size: 11.5px; color: var(--fg-2); cursor: pointer;
   padding: 3px 10px; border-radius: 999px;
   background: transparent; border: 1px solid var(--line);
-  transition: all .15s;
+  transition: color .15s, background .15s, border-color .15s, box-shadow .15s;
 }
 .chip:hover { border-color: var(--line-2); }
-.chip.on { color: #fff; background: rgba(91, 157, 255, .18); border-color: rgba(91, 157, 255, .5); }
+.chip.on {
+  color: #fff; background: rgba(91, 157, 255, .2); border-color: rgba(91, 157, 255, .55);
+  box-shadow: 0 0 0 3px rgba(91, 157, 255, .1), inset 0 1px 0 rgba(255, 255, 255, .12);
+}
 
 .feed {
   display: flex; flex-direction: column; gap: 9px;
@@ -601,6 +610,48 @@ video { display: block; width: 100%; }
 .phone .empty { font-size: 14px; }
 .phone .empty svg { width: 32px; height: 32px; }
 
+/* ===================== 手机视图的美化（2026-09-23）=====================
+   ★ 这一节**只动观感**：不动对比度、不动任何尺寸契约。
+     交付形态是给低视力用户和陪同者看的，「好看」在这里的标准是
+     **一眼分得清层次**，不是「暗下来显得高级」—— 所以只往亮侧加
+     （内高光、渐变、圆角、投影），绝不加低对比度的灰。
+   ---------------------------------------------------------------- */
+
+/* 圆角统一到 18px：手机上没有鼠标悬停，形状本身就是「这是一块内容」的线索 */
+.phone .card { border-radius: 18px; }
+
+/* 每张卡的标题左侧一道短色条 —— 扫一眼就知道这是哪一张卡 */
+.phone .card > h2::before,
+.phone .card-head h2::before {
+  content: ""; align-self: center; width: 3px; height: 15px; border-radius: 2px;
+  background: linear-gradient(180deg, var(--accent), var(--accent-2));
+}
+
+/* 状态药：整枚跟着状态变色，不再只靠里面那个小圆点。
+   ★ 小圆点对读屏是隐藏的（aria-hidden，它只是颜色），而整枚变色是给
+     **低视力**用户看的：整块色域比 7px 的点好认得多。这仍然只是第三重
+     编码 —— 文字始终写着「已连接 / 断开，重连中… / 正常 / 降级」。 */
+.phone .pill { padding: 5px 12px; transition: border-color .2s, background .2s; }
+.phone .pill.ok  { border-color: rgba(52, 211, 153, .3);  background: rgba(52, 211, 153, .08); }
+.phone .pill.bad { border-color: rgba(251, 113, 133, .45); background: rgba(251, 113, 133, .12); }
+
+/* 播报条目：圆角跟上卡片；最新那条再圆一点，强化「它是主角」 */
+.phone .feed .ann { border-radius: 14px; }
+.phone .feed > .ann:first-child { border-radius: 16px; }
+
+/* 底部操作栏：浮起来一点，别像贴了张纸 */
+.phone .tabbar {
+  border-top-color: var(--line-2);
+  box-shadow: 0 -12px 32px -24px rgba(0, 0, 0, .95);
+}
+.phone .tab { border-radius: 13px; transition: color .15s, background .15s, border-color .15s; }
+
+/* 空状态的图标加一个柔和的圆底，别孤零零浮在黑里 */
+.phone .empty svg {
+  width: 46px; height: 46px; padding: 11px; opacity: .8;
+  border-radius: 50%; background: rgba(255, 255, 255, .04); border: 1px solid var(--line);
+}
+
 /* 触控目标一律 ≥ 44px。手机上没有 hover，只有手指。 */
 .phone .btn { min-height: 44px; font-size: 14px; }
 .phone input[type=text] { min-height: 42px; font-size: 15px; }
@@ -646,10 +697,16 @@ video { display: block; width: 100%; }
      颜色：开是中性色，关是琥珀色（＝警示，和状态药同一个语义色）
    光靠颜色不行 —— 看不见颜色的人不少。见 app.css 顶部那条注释：
    颜色在这套样式里永远只是**第三重**编码。 */
-#ttsBtn[aria-pressed="false"] { color: var(--warn); border-color: rgba(251, 191, 36, .45); }
 #ttsBtn .ico-off { display: none; }
 #ttsBtn[aria-pressed="false"] .ico-on { display: none; }
 #ttsBtn[aria-pressed="false"] .ico-off { display: block; }
+#ttsBtn[aria-pressed="false"] { color: var(--warn); border-color: rgba(251, 191, 36, .45); }
+/* ★ 「不可用」是**第三种**状态，不是「关」的加强版：关是用户自己选的，
+   不可用是这台机器根本念不出来 —— 所以它是红的（=坏），不是琥珀的（=注意）。
+   ★ 必须排在 [aria-pressed="false"] 之后：两者特异性相同，后写的赢。 */
+#ttsBtn.dead { color: var(--bad); border-color: rgba(251, 113, 133, .5); }
+#ttsBtn.dead .ico-on { display: none; }
+#ttsBtn.dead .ico-off { display: block; }
 
 /* ===================== 高级项（起终点坐标） ===================== */
 

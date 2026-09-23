@@ -206,6 +206,11 @@
       <div class="row feed-foot">
         <button class="btn ghost" id="pauseBtn" aria-pressed="false">暂停播报</button>
         <button class="btn ghost" id="clearBtn">清空</button>
+        <!-- ★ 语速。不是花活：中文 TTS 约 250ms/字，一条 15 字的播报要念 3.7 秒
+             （design.md D5 自己算过），而播报是按场景节奏来的 —— 1× 时耳朵很容易
+             落后现实。盲人用户普遍把读屏开到 1.5–2×，这是习惯不是偏好，
+             所以这一档必须能调，而且换了要当场念一句给他听。 -->
+        <button class="btn ghost" id="rateBtn" aria-label="播报语速 1×，点击换下一档">语速 1×</button>
       </div>
     </section>
 

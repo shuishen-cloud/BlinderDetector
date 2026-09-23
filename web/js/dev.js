@@ -16,7 +16,7 @@
 import { $, readGeo } from "./dom.js";
 import { log } from "./log.js";
 import { postJson, fetchHealth } from "./net.js";
-import { toast, speak, haptic } from "./ui.js";
+import { toast, speak, haptic, localNote } from "./ui.js";
 import LingmouMap from "../map.js";
 
 // =====================================================================
@@ -69,9 +69,23 @@ function routeToast(path, g) {
  */
 function confirmAction(msg, kind = "") {
   toast(msg, kind);
-  speak(msg);
+  // ★ 带 interrupt：用户**自己按的**按钮优先于一条没人要的场景描述 ——
+  //   按了按钮却要等十几秒才听到回声，用户只会再按一次。
+  speak(msg, { priority: 2, interrupt: true });
   haptic("short");
 }
+
+/** 按下就要给回执的路由 —— 生死按钮不能等网络回来才响。
+ *
+ *  ★ 起因：一键求助原来只有「请求返回之后」那一次确认（confirmAction）。
+ *    可那中间是**一整个网络往返**，弱网下几秒起步，而这几秒里用户完全不知道
+ *    自己按上没有 —— 他只会再按一次，或者更糟：以为按上了，站着等。
+ *    所以耳朵和手先给一次「我收到了」，结果回来再覆盖它。
+ */
+const PRESS_ACK = {
+  "/v1/emergency/sos": "正在请求帮助",
+  "/v1/safety/fall": "收到跌倒信号，正在确认",
+};
 
 function bindRouteButtons() {
   document.querySelectorAll("button[data-route]").forEach((btn) => {
@@ -94,6 +108,11 @@ function bindRouteButtons() {
         if (destGeo) body.extra.destination_geo = destGeo;
       }
       try {
+        const ack = PRESS_ACK[path];
+        if (ack) {
+          haptic("long");
+          speak(ack, { priority: 3, interrupt: true });
+        }
         const g = await postJson(path, body);
         log(`POST ${path} → 产出 ${g.produced} 条，放行 ${g.passed} 条`,
             g.produced ? "ok" : "dim");
@@ -147,6 +166,10 @@ function bindGeoButton() {
 // 健康检查 —— 「没出声」必须能和「系统哑了」区分开
 // =====================================================================
 
+/** 上一次的健康结论。null = 还没探过 —— 首次探测只记不下结论，
+ *  理由见 health() 里「只报变化」那段注释。 */
+let lastHealthBad = null;
+
 async function health() {
   const dev = $("devStatus");
   try {
@@ -163,9 +186,29 @@ async function health() {
     //   哑了，会把「没出声」理解成「环境安全」。细节放 title 与开发者面板
     //   —— 见 app/api/routes.py::health。
     $("hTxt").textContent = bad ? "降级" : "正常";
+    // 整枚药跟着变色，和 wsPill 一套（见 app.css 的 .pill.ok / .pill.bad）。
+    $("hPill").classList.toggle("ok", !bad);
+    $("hPill").classList.toggle("bad", bad);
     $("hPill").title = bad
       ? "降级：" + b.degraded.map((d) => d.reason).join(", ")
       : "全部实现可用";
+
+    // ★ **只报变化**，不报状态（2026-09-23）。
+    //   健康是每 5 秒轮一次的：每条都念一遍就是刷屏，用户三次之后就会开始
+    //   无视它 —— 到真出事那次他也不会听了。所以只有「变坏 / 变好」那一刻
+    //   才出声，而且要说出**降到哪去了**，光说「降级」等于没说。
+    //
+    //   ★ 首次探测（lastBad === null）不下结论：页面刚打开时系统本来就是
+    //     那个样子，这时候喊一句「系统降级」是假消息 —— 用户会以为刚出事。
+    const was = lastHealthBad;
+    lastHealthBad = bad;
+    if (was !== null && was !== bad) {
+      const why = b.degraded.map((d) => d.reason).join("、");
+      localNote(
+        bad ? `系统降级：${why || "部分功能不可用"}。` : "系统已恢复正常。",
+        { priority: 2, hapticKind: bad ? "double" : "short" },
+      );
+    }
 
     if (dev) {
       const c = b.config;
@@ -178,8 +221,13 @@ async function health() {
   } catch (e) {
     $("hDot").className = "dot off";
     $("hTxt").textContent = "连不上";
+    $("hPill").classList.remove("ok");
+    $("hPill").classList.add("bad");
     $("hPill").title = `健康检查失败：${e.message}`;
     if (dev) dev.textContent = `健康检查失败：${e.message}`;
+    // ★ 「连不上」不出声：同一件事 WS 那条路已经说过一次了（见 main.js 的
+    //   setConnectionStatus）。一件事报两遍，用户会以为出了两个问题。
+    //   这里只把画面改诚实，声音留给那条更根本的通道。
   }
 }
 

@@ -9,6 +9,11 @@ export const $ = (id) => document.getElementById(id);
 /** 需要用户**动作**的层 —— 只有它值得抢屏，见 ui.js 的 receive()。 */
 export const SOURCE_EMERGENCY = "emergency";
 
+/** 系统自己说的话（连接状态、降级告知）。★ 服务端也会发这个来源，
+ *  前端本地产生的播报（见 ui.js::localNote）用同一个 —— 对用户来说
+ *  「系统在说话」只有一件事，不该分成两个来源名。 */
+export const SOURCE_SYSTEM = "system";
+
 export const SOURCE_NAMES = {
   perception: "感知",
   safety: "安全",

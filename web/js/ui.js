@@ -7,9 +7,16 @@
  * 这一半包括：播报流渲染、紧急全屏、轻提示、语音与震动、筛选/暂停/清空。
  */
 
-import { $, SOURCE_NAMES, EMPTY_HTML, SOURCE_EMERGENCY } from "./dom.js";
+import { $, SOURCE_NAMES, EMPTY_HTML, SOURCE_EMERGENCY, SOURCE_SYSTEM } from "./dom.js";
 import { state, history, queue, bump } from "./state.js";
 import { log } from "./log.js";
+import {
+  speak, speakAnnouncement, initSpeech, availability, speechUnavailable,
+  onAvailabilityChange, cycleRate, rateLabel,
+} from "./speech.js";
+
+// 动作确认（dev.js）要走同一条出口 —— 转发一次，别让调用方改 import。
+export { speak };
 
 // =====================================================================
 // 轻提示 —— 手机视图里没有请求日志，动作必须有可见反馈
@@ -86,7 +93,7 @@ function paint(a, visible = true) {
   feed.querySelector(".empty")?.remove();
 
   const el = document.createElement("div");
-  el.className = `ann p${a.priority}${a.source === "system" ? " sys" : ""}`;
+  el.className = `ann p${a.priority}${a.source === SOURCE_SYSTEM ? " sys" : ""}`;
   el.dataset.priority = a.priority;
   el.dataset.ts = Date.now();
   if (!visible) el.hidden = true;
@@ -149,7 +156,7 @@ function paint(a, visible = true) {
   history.unshift(el);
   while (history.length > 100) history.pop().remove();
 
-  speak(a.text);
+  speakAnnouncement(a);
   haptic(a.haptic, el);
   expire(el, a.ttl_ms);
 }
@@ -180,25 +187,65 @@ export function haptic(kind, el) {
 // 语音播报
 // =====================================================================
 
-export function speak(text) {
-  if (!state.ttsOn || state.paused || !window.speechSynthesis) return;
-  const u = new SpeechSynthesisUtterance(text);
-  u.lang = "zh-CN";
-  speechSynthesis.speak(u);
+/** 声音开关上的字 —— 注意是**三个**状态，不是一个开关的两态。
+ *
+ *  ★ 多出来的那个「不可用」是 2026-09-23 加的：浏览器没有语音 API、或系统里
+ *    一个中文嗓音都没有时，开关亮着「声音：开」而一点声都不出 —— 这个项目
+ *    最不能接受的就是这种假绿。探不到就如实写探不到。
+ *
+ *  ★ 顺带把 aria-live 一起定了：这一页有**两条**声音通道（自带 TTS 与读屏
+ *    TalkBack / VoiceOver），两边同时念同一句话就是双读。所以让 live 跟着
+ *    开关走：TTS 在响 → off（读屏别插嘴）；TTS 不响（用户关了，或压根没有）
+ *    → polite（读屏接手，此刻它是用户唯一还能听到播报的通道）。 */
+function paintTts() {
+  const dead = speechUnavailable();
+  const live = state.ttsOn && !dead;
+  $("ttsTxt").textContent = dead ? "声音：不可用"
+    : (state.ttsOn ? "声音：开" : "声音：关");
+  $("ttsBtn").classList.toggle("on", live);
+  $("ttsBtn").classList.toggle("dead", dead);
+  $("ttsBtn").setAttribute("aria-pressed", live ? "true" : "false");
+  $("feed").setAttribute("aria-live", live ? "off" : "polite");
+  return live;
 }
 
 export function setTts(on) {
   state.ttsOn = on;
-  $("ttsTxt").textContent = on ? "声音：开" : "声音：关";
-  $("ttsBtn").classList.toggle("on", on);
-  $("ttsBtn").setAttribute("aria-pressed", on ? "true" : "false");
-  // ★ 这一页有**两条**声音通道：自带 TTS（speak）和读屏（TalkBack / VoiceOver）。
-  //   两边同时念同一句话就是双读 —— 所以让 `aria-live` 跟着 TTS 开关走：
-  //   TTS 开着 → off（读屏别插嘴）；TTS 关掉 → polite（读屏接手，
-  //   此刻它成了用户唯一能听到播报的通道，不能再让它闭嘴）。
-  //   见 index.html 里 `#feed` 上那段注释。
-  $("feed").setAttribute("aria-live", on ? "off" : "polite");
+  paintTts();
   if (!on) window.speechSynthesis?.cancel();
+}
+
+/** 语速按钮上的字。★ 光写「语速」不行 —— 用户得知道**现在是几档**，
+ *  否则他没法判断按一下之后是否变快了。 */
+function paintRate() {
+  const label = rateLabel();
+  $("rateBtn").textContent = `语速 ${label}`;
+  $("rateBtn").setAttribute("aria-label", `播报语速 ${label}，点击换下一档`);
+}
+
+/** 本地产生的一条播报（不是服务端来的）—— 断网、降级这类系统状态。
+ *
+ *  ★ 为什么不能只改那枚小药丸：对看不见屏幕的人，「断开」和「一切都好、
+ *    只是暂时没人说话」长得一模一样。所以状态变化必须走**播报流这条同一条
+ *    路**：TTS 会念出来，TTS 关掉时 feed 的 aria-live 会交给读屏念，
+ *    而它同时留在流里能被翻回来。三条通道，一个来源。
+ */
+export function localNote(text, { priority = 2, hapticKind = "none", ttl = 15_000 } = {}) {
+  const a = {
+    id: `local_${Date.now()}`,
+    source: SOURCE_SYSTEM,
+    priority,
+    text,
+    ttl_ms: ttl,
+    haptic: hapticKind,
+    interrupt: priority >= 3,
+  };
+  // 暂停是「别往墙上贴」，不是「别记下来」—— 和 receive() 一个规矩。
+  if (state.paused) { queue.push(a); return a; }
+  // ★ 本地播报**不受筛选影响**：把墙筛成「只看紧急」是选择不看次要播报，
+  //   不是选择不知道系统哑了。
+  paint(a, true);
+  return a;
 }
 
 // =====================================================================
@@ -236,7 +283,33 @@ export function initUI() {
     toast("已清空");
   };
 
-  $("ttsBtn").onclick = () => setTts(!state.ttsOn);
+  $("ttsBtn").onclick = () => {
+    // 念不出来的时候别让开关假装能开 —— 点一下就**说**一次（看得见 + 听得见），
+    // 不能点了没反应。
+    if (speechUnavailable()) {
+      const why = availability() === "no-api" ? "这个浏览器不支持语音播报" : "系统里没有中文语音，念不出来";
+      toast(why, "err");
+      log(`声音不可用：${why}`, "err");
+      return;
+    }
+    setTts(!state.ttsOn);
+  };
+
+  $("rateBtn").onclick = () => {
+    const label = cycleRate();
+    paintRate();
+    // ★ 换档必须**当场念一句**：语速只能用耳朵判断，光把数字改掉用户没得评估。
+    //   这句也顺带证明新档位是通的。
+    speak("语速已切换。前方有台阶，请注意。", { priority: 2, interrupt: true });
+    log(`播报语速 → ${label}`, "dim");
+  };
+
+  // 开机自检语音能力 —— 探不到就得改开关上的字（见 paintTts）。
+  // ★ 先挂回调再探：探到结果的那一刻（同步或异步）都要**立刻**反映到开关上。
+  onAvailabilityChange(paintTts);
+  initSpeech();
+  paintRate();
+
   // 默认**开**：这一屏的全部价值就是出声。浏览器在首次交互前可能拒绝
   // 朗读，用户碰一下屏幕就正常了 —— 不必为此把默认值改成「关」。
   setTts(true);
