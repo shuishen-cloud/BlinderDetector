@@ -2,14 +2,24 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>灵眸伴途 · 调试台</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#07090e">
+<meta name="color-scheme" content="dark">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>灵眸伴途</title>
 <link rel="stylesheet" href="/static/app.css">
 <!--
-  前端调试台 —— 零构建、零 npm。
+  页面分两层，默认只显示第一层：
 
-  它的作用是**验证契约**，不是交付形态：把「帧 → 后端 → 播报 → WS 推流」
-  这条真实链路跑通，看见每一层到底吐出了什么。
+    ① 手机视图 `#app`        —— 交付形态，按手机使用逻辑排：
+                                播报流为主、底部大按钮、紧急全屏。
+    ② 开发者面板 `#devPanel`  —— 契约验证用的测试件，**默认隐藏**。
+                                两个入口：地址栏 `?dev=1`，或右上角 ⚙。
+                                选择记在 localStorage，刷新后保持。
+
+  ★ 隐藏 ≠ 删除：测试件仍然在 DOM 里。`app.js` / `map.js` 一律按 id 取用，
+    元素真的被删掉会当场报错。所以是 `hidden`，翻出来就能继续验证契约。
 
   四个文件而不是一个：
     index.html   结构
@@ -19,175 +29,248 @@
                  加载失败会退回纯 SVG 示意图，且**失败只落在卡片内**，
                  不影响播报流与请求日志）
 
-  ★ 这是全套代码里**唯一**依赖第三方运行时的地方。它必须满足两条：
+  ★ map.js 是这套代码里唯一依赖第三方运行时的地方。它必须满足两条：
     ① 失败可见且局限在自己的卡片里（不碰 window.onerror、不进请求日志）；
-    ② 没有它时整个调试台照常工作。
+    ② 没有它时整个页面照常工作。
 
   ★ 关于 extra.index：两个 mock（MockVLM / MockDetector）都靠 index % 3
     轮换场景。所以这里必须发**递增**的序号 —— 固定 index 会让仲裁器把
     后续全部当重复丢掉，页面上只会看到一条。
 
-  两个帧源共用同一个上传接口 POST /v1/frame（multipart）：
-    · 视频抽帧   —— 本期测试用，读服务端已有的 data/demo.mp4
-    · 摄像头     —— 只留接口占位（见 app.js 末尾 startCamera），
-                    将来换成 getUserMedia 取流即可，上传路径一行不用改
+  手机视图里没有任何帧源，帧源在开发者面板（视频抽帧 / 摄像头 / 单张图片），
+  它们共用同一个上传接口 POST /v1/frame（multipart）。
 -->
 </head>
 <body>
 <div class="glow" aria-hidden="true"></div>
 
-<header class="topbar">
-  <div class="brand">
-    <svg class="mark" viewBox="0 0 32 32" aria-hidden="true">
-      <path d="M16 5.5c6.2 0 11 6.3 12.4 9.1a3 3 0 0 1 0 2.8C27 20.2 22.2 26.5 16 26.5S5 20.2 3.6 17.4a3 3 0 0 1 0-2.8C5 11.8 9.8 5.5 16 5.5Z"
-            fill="none" stroke="currentColor" stroke-width="2"/>
-      <circle cx="16" cy="16" r="4.2" fill="currentColor"/>
-    </svg>
-    <div class="brand-txt">
-      <h1>灵眸伴途</h1>
-      <p>前端调试台 · 契约验证</p>
+<!-- ================================================================
+     ① 手机视图 —— 交付形态
+     ================================================================ -->
+<div class="phone" id="app">
+
+  <header class="topbar">
+    <div class="brand">
+      <svg class="mark" viewBox="0 0 32 32" aria-hidden="true">
+        <path d="M16 5.5c6.2 0 11 6.3 12.4 9.1a3 3 0 0 1 0 2.8C27 20.2 22.2 26.5 16 26.5S5 20.2 3.6 17.4a3 3 0 0 1 0-2.8C5 11.8 9.8 5.5 16 5.5Z"
+              fill="none" stroke="currentColor" stroke-width="2"/>
+        <circle cx="16" cy="16" r="4.2" fill="currentColor"/>
+      </svg>
+      <div class="brand-txt">
+        <h1>灵眸伴途</h1>
+        <p>出行陪伴 · 实时播报</p>
+      </div>
     </div>
-  </div>
 
-  <div class="status">
-    <span class="pill" id="wsPill"><i class="dot" id="wsDot"></i><span id="wsTxt">WS 未连接</span></span>
-    <span class="pill" id="hPill"><i class="dot" id="hDot"></i><span id="hTxt">健康检查…</span></span>
-    <button id="ttsBtn" class="btn ghost" title="用浏览器 TTS 念出播报，便于评估措辞">语音播报：关</button>
-    <button id="clearBtn" class="btn ghost">清空</button>
-  </div>
-</header>
+    <div class="status">
+      <span class="pill" id="wsPill"><i class="dot" id="wsDot"></i><span id="wsTxt">连接中…</span></span>
+      <span class="pill" id="hPill" title="健康检查"><i class="dot" id="hDot"></i><span id="hTxt">检查中</span></span>
+      <button class="btn ghost icon" id="devBtn" aria-pressed="false"
+              title="开发者模式（测试件）" aria-label="开发者模式">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <circle cx="12" cy="12" r="3.1" fill="none" stroke="currentColor" stroke-width="1.6"/>
+          <path d="M12 3.6v2.2M12 18.2v2.2M20.4 12h-2.2M5.8 12H3.6M17.9 6.1l-1.6 1.6M7.7 16.3l-1.6 1.6M17.9 17.9l-1.6-1.6M7.7 7.7 6.1 6.1"
+                fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+        </svg>
+      </button>
+    </div>
+  </header>
 
-<section class="stats" aria-label="本次会话统计">
-  <div class="stat"><span class="k">收到播报</span><span class="v" id="stTotal">0</span></div>
-  <div class="stat"><span class="k">紧急</span><span class="v warn" id="stCritical">0</span></div>
-  <div class="stat"><span class="k">已过期</span><span class="v" id="stExpired">0</span></div>
-  <div class="stat"><span class="k">闸门丢弃</span><span class="v" id="stDropped">0</span></div>
-  <div class="stat"><span class="k">发帧</span><span class="v" id="stFrames">0</span></div>
-</section>
+  <div class="screen">
 
-<main>
-  <!-- ==================== 左：帧源与控制 ==================== -->
-  <div class="col">
-
-    <section class="card">
-      <h2><span class="idx">①</span>视频抽帧<small>本期测试用</small></h2>
-      <div class="video-wrap">
-        <video id="video" src="/data/demo.mp4" muted loop playsinline controls></video>
-      </div>
-      <div class="row">
-        <button class="btn primary" id="loopBtn">开始发帧</button>
-        <label class="field">感知<input type="number" id="perMs" value="2000" min="200" step="100"><span>ms</span></label>
-        <label class="field">安全<input type="number" id="safMs" value="600" min="100" step="100"><span>ms</span></label>
-      </div>
-      <p class="hint">
-        两条流水线<b>各自独立发包</b>：感知走云端 VLM（1–3 秒），安全走轻量检测（&lt;200ms）
-        —— 这就是 design.md D2 的两条解耦流水线。
-        <br>视频 404 就先跑 <code>python scripts/make_test_video.py</code>。
-      </p>
-    </section>
-
-    <section class="card">
-      <h2><span class="idx">②</span>摄像头<small>接口已就绪</small></h2>
-      <div class="placeholder">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8h3l1.5-2h7L17 8h3v11H4z" fill="none" stroke="currentColor" stroke-width="1.6"/><circle cx="12" cy="13" r="3.4" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>
-        <p>待接入 —— 将来只需 <code>getUserMedia</code> 取流 + 定时抓帧</p>
-        <p class="dim">复用同一个 <code>sendFrame()</code>，后端一行不用改</p>
-      </div>
-    </section>
-
-    <section class="card">
-      <h2><span class="idx">③</span>单张图片<small>拖拽即可</small></h2>
-      <label class="dropzone" id="dropzone">
-        <input type="file" id="file" accept="image/*" multiple hidden>
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5M4 16v2.5A1.5 1.5 0 0 0 5.5 20h13a1.5 1.5 0 0 0 1.5-1.5V16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
-        <span>点这里选图，或把图片拖到页面上</span>
-        <span class="dim">不依赖 demo.mp4，适合快速验证单帧</span>
-      </label>
-    </section>
-
-    <section class="card">
-      <h2>其余路由<small>不带图像</small></h2>
-      <div class="row">
-        <button class="btn" data-route="/v1/safety/fall" data-body='{"extra":{"index":1,"kind":"fall_signal"}}'>跌倒信号</button>
-        <button class="btn" data-route="/v1/emergency/sos" data-body='{"extra":{"index":1,"kind":"sos"}}'>一键求助</button>
-        <button class="btn" data-route="/v1/emergency/cancel" data-body='{"extra":{"kind":"cancel"}}'>取消求助</button>
-        <button class="btn" data-route="/v1/emergency/tick" data-body='{"now_ms":9999999999999}'>推进时钟</button>
-      </div>
-      <div class="row">
-        <input type="text" id="dest" value="太原站" placeholder="目的地">
-        <button class="btn" data-route="/v1/navigation/route" data-dest="1" data-geo="1">规划路线</button>
-      </div>
-      <div class="row">
-        <input type="text" id="geo-lat" value="37.957919" placeholder="起点纬度" size="9">
-        <input type="text" id="geo-lng" value="112.543633" placeholder="起点经度" size="9">
-        <span class="hint">→</span>
-        <input type="text" id="dest-geo-lat" value="37.859717" placeholder="终点纬度" size="9">
-        <input type="text" id="dest-geo-lng" value="112.581822" placeholder="终点经度" size="9">
-      </div>
-      <p class="hint">
-        真实地图（百度）<b>只认坐标、不认地名</b>，「最近的地铁站」这种名字得先地理编码
-        （本轮没做）。所以目的地坐标填了才走真实地图；留空会降级到内置演示路网，
-        并<b>如实播报</b>说明。改动坐标再点「规划路线」，可以验证起点确实参与了规划。
-      </p>
-      <p class="hint">
-        「推进时钟」发的是 <code>now_ms=9999999999999</code>（公元 2286 年），
-        用来强行跑完跌倒 / 求助的升级链。闸门不会因此卡住 —— 见
-        <code>tests/test_api.py::test_far_future_tick_does_not_wedge_the_gate</code>。
-      </p>
-    </section>
-
-    <!-- ==================== 路线可视化 ==================== -->
-    <section class="card">
-      <h2><span class="idx">④</span>路线可视化<small id="map-src">准备中…</small></h2>
-      <div class="map-stage">
-        <div id="map"></div>
-        <svg id="map-svg" hidden aria-label="路线示意图"></svg>
-        <p class="map-msg" id="map-msg">正在准备地图…</p>
-      </div>
-      <p class="hint">
-        底图来自百度 JSAPI GL（CDN 加载）。<b>断网或没配
-        <code>BAIDU_BROWSER_AK</code> 时退回无底图示意图</b>，几何仍然是真的。
-      </p>
-      <p class="hint">
-        起终点标记取自<b>路线几何本身</b>，不是上面的输入框 —— 输入框是 WGS-84
-        而百度返回的几何是 BD-09，实测能差一公里。那条<b>黄色虚线</b>就是把
-        这段偏差画出来，不假装它们是同一个坐标系。
-      </p>
-    </section>
-  </div>
-
-  <!-- ==================== 右：播报流与日志 ==================== -->
-  <div class="col">
+    <!-- ---------------- 播报流（主） ---------------- -->
     <section class="card feed-card">
       <div class="card-head">
-        <h2>播报流<small>WebSocket /v1/stream</small></h2>
+        <h2>播报<small>最新的在最上面</small></h2>
         <div class="feed-tools">
           <div class="chips" id="filters">
             <button class="chip on" data-min="0">全部</button>
             <button class="chip" data-min="2">重要+</button>
             <button class="chip" data-min="3">紧急</button>
           </div>
-          <button class="btn ghost" id="pauseBtn">暂停</button>
         </div>
       </div>
       <div class="feed" id="feed">
         <div class="empty">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 5 6.5 9H3v6h3.5L11 19zM15.5 8.5a5 5 0 0 1 0 7" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
-          <p>等待播报…</p>
-          <p class="dim">先点左边的「开始发帧」</p>
+          <p>还没有播报</p>
+          <p class="dim">系统出声后，这里按时间倒序列出来</p>
         </div>
+      </div>
+      <div class="row feed-foot">
+        <button class="btn ghost" id="pauseBtn">暂停播报</button>
+        <button class="btn ghost" id="clearBtn">清空</button>
       </div>
     </section>
 
-    <section class="card log-card">
-      <div class="card-head">
-        <h2>请求日志<small>闸门结果与异常</small></h2>
-        <span class="pill tiny" id="logTail">—</span>
+    <!-- ---------------- 导航（第三层） ---------------- -->
+    <section class="card">
+      <h2>导航<small id="map-src">准备中…</small></h2>
+
+      <div class="row">
+        <input type="text" id="dest" value="太原站" placeholder="要去哪儿" enterkeyhint="go" autocomplete="off">
       </div>
-      <div class="log" id="log"></div>
+      <div class="row">
+        <button class="btn primary wide" data-route="/v1/navigation/route"
+                data-dest="1" data-geo="1">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 4 6 2 5-2v14l-5 2-6-2-5 2V6z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg>
+          开始导航
+        </button>
+        <button class="btn" id="geoBtn" title="用手机定位填起点">用当前位置</button>
+      </div>
+
+      <details class="adv">
+        <summary>起终点坐标（高级）</summary>
+        <div class="row">
+          <label class="field">起点<input type="text" id="geo-lat" value="37.957919" inputmode="decimal" size="9"></label>
+          <label class="field"><input type="text" id="geo-lng" value="112.543633" inputmode="decimal" size="9"></label>
+        </div>
+        <div class="row">
+          <label class="field">终点<input type="text" id="dest-geo-lat" value="37.859717" inputmode="decimal" size="9"></label>
+          <label class="field"><input type="text" id="dest-geo-lng" value="112.581822" inputmode="decimal" size="9"></label>
+        </div>
+        <p class="hint">
+          顺序都是<b>纬度, 经度</b>，坐标系 WGS-84（端侧 GPS 的原生坐标系）。
+          真实地图（百度）<b>只认坐标、不认地名</b> —— 「太原站」这种名字得先地理编码，
+          本项目还没做。所以目的地坐标留空时不会瞎猜，而是<b>如实降级</b>到内置演示路网
+          并播报说明。
+        </p>
+      </details>
+
+      <div class="map-stage">
+        <div id="map"></div>
+        <svg id="map-svg" hidden aria-label="路线示意图"></svg>
+        <p class="map-msg" id="map-msg">正在准备地图…</p>
+      </div>
+      <p class="hint">
+        底图来自百度 JSAPI GL（CDN 加载）。<b>断网或没配 <code>BAIDU_BROWSER_AK</code>
+        时退回无底图示意图</b>，几何仍然是真的。
+      </p>
     </section>
   </div>
-</main>
+
+  <!-- ---------------- 底部操作栏 ---------------- -->
+  <nav class="tabbar" aria-label="常用操作">
+    <button class="btn ghost tab" id="ttsBtn" aria-pressed="true" title="用浏览器 TTS 念出播报">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 5 6.5 9H3v6h3.5L11 19zM15.5 8.5a5 5 0 0 1 0 7" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+      <span id="ttsTxt">播报：开</span>
+    </button>
+    <button class="btn sos" data-route="/v1/emergency/sos"
+            data-body='{"extra":{"index":1,"kind":"sos"}}'>一键求助</button>
+    <button class="btn ghost tab" data-route="/v1/emergency/cancel"
+            data-body='{"extra":{"kind":"cancel"}}'>取消求助</button>
+  </nav>
+</div>
+
+<!-- ================================================================
+     紧急全屏 —— priority 3 的播报会顶到最前面
+     ================================================================ -->
+<div class="emg" id="emg" hidden role="alert" aria-live="assertive">
+  <div class="emg-in">
+    <p class="emg-k">紧急</p>
+    <p class="emg-txt" id="emgText"></p>
+    <button class="btn emg-ok" id="emgOk">我知道了</button>
+  </div>
+</div>
+
+<!-- ================================================================
+     ② 开发者面板 —— 测试件，默认隐藏（?dev=1 或点右上角 ⚙）
+     ================================================================ -->
+<div class="dev" id="devPanel" hidden>
+  <div class="dev-bar">
+    <span class="pill tiny">开发者模式</span>
+    <span class="dim">以下是<b>契约验证</b>用的测试件，交付形态里不显示。
+      地址栏 <code>?dev=0</code> 或再点一次 ⚙ 收起。</span>
+    <button class="btn ghost" id="devClose">收起</button>
+  </div>
+
+  <section class="stats" aria-label="本次会话统计">
+    <div class="stat"><span class="k">收到播报</span><span class="v" id="stTotal">0</span></div>
+    <div class="stat"><span class="k">紧急</span><span class="v warn" id="stCritical">0</span></div>
+    <div class="stat"><span class="k">已过期</span><span class="v" id="stExpired">0</span></div>
+    <div class="stat"><span class="k">闸门丢弃</span><span class="v" id="stDropped">0</span></div>
+    <div class="stat"><span class="k">发帧</span><span class="v" id="stFrames">0</span></div>
+  </section>
+
+  <main>
+    <!-- ==================== 左：帧源与控制 ==================== -->
+    <div class="col">
+
+      <section class="card">
+        <h2><span class="idx">①</span>视频抽帧<small>本期测试用</small></h2>
+        <div class="video-wrap">
+          <video id="video" src="/data/demo.mp4" muted loop playsinline controls></video>
+        </div>
+        <div class="row">
+          <button class="btn primary" id="loopBtn">开始发帧</button>
+          <label class="field">感知<input type="number" id="perMs" value="2000" min="200" step="100"><span>ms</span></label>
+          <label class="field">安全<input type="number" id="safMs" value="600" min="100" step="100"><span>ms</span></label>
+        </div>
+        <p class="hint">
+          两条流水线<b>各自独立发包</b>：感知走云端 VLM（1–3 秒），安全走轻量检测（&lt;200ms）
+          —— 这就是 design.md D2 的两条解耦流水线。
+          <br>视频 404 就先跑 <code>python scripts/make_test_video.py</code>。
+        </p>
+      </section>
+
+      <section class="card">
+        <h2><span class="idx">②</span>摄像头<small>接口已就绪</small></h2>
+        <div class="placeholder">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8h3l1.5-2h7L17 8h3v11H4z" fill="none" stroke="currentColor" stroke-width="1.6"/><circle cx="12" cy="13" r="3.4" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>
+          <p>待接入 —— 将来只需 <code>getUserMedia</code> 取流 + 定时抓帧</p>
+          <p class="dim">复用同一个 <code>sendFrame()</code>，后端一行不用改</p>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2><span class="idx">③</span>单张图片<small>拖拽即可</small></h2>
+        <label class="dropzone" id="dropzone">
+          <input type="file" id="file" accept="image/*" multiple hidden>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5M4 16v2.5A1.5 1.5 0 0 0 5.5 20h13a1.5 1.5 0 0 0 1.5-1.5V16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+          <span>点这里选图，或把图片拖到页面上</span>
+          <span class="dim">不依赖 demo.mp4，适合快速验证单帧</span>
+        </label>
+      </section>
+
+      <section class="card">
+        <h2>其余路由<small>不带图像</small></h2>
+        <div class="row">
+          <button class="btn" data-route="/v1/safety/fall" data-body='{"extra":{"index":1,"kind":"fall_signal"}}'>跌倒信号</button>
+          <button class="btn" data-route="/v1/emergency/cancel" data-body='{"extra":{"kind":"cancel"}}'>取消求助</button>
+          <button class="btn" data-route="/v1/emergency/tick" data-body='{"now_ms":9999999999999}'>推进时钟</button>
+        </div>
+        <p class="hint">
+          「一键求助」和「开始导航」在手机视图里（那两条是产品功能，不是测试件）。
+        </p>
+        <p class="hint">
+          「推进时钟」发的是 <code>now_ms=9999999999999</code>（公元 2286 年），
+          用来强行跑完跌倒 / 求助的升级链。闸门不会因此卡住 —— 见
+          <code>tests/test_api.py::test_far_future_tick_does_not_wedge_the_gate</code>。
+        </p>
+      </section>
+    </div>
+
+    <!-- ==================== 右：服务状态与日志 ==================== -->
+    <div class="col">
+      <section class="card">
+        <div class="card-head">
+          <h2>服务状态<small>GET /v1/health</small></h2>
+        </div>
+        <div class="log" id="devStatus">—</div>
+      </section>
+
+      <section class="card log-card">
+        <div class="card-head">
+          <h2>请求日志<small>闸门结果与异常</small></h2>
+          <span class="pill tiny" id="logTail">—</span>
+        </div>
+        <div class="log" id="log"></div>
+      </section>
+    </div>
+  </main>
+</div>
+
+<div class="toast" id="toast" hidden></div>
 
 <script src="/static/app.js"></script>
 <!-- 路线可视化。★ 必须排在 app.js **之后**：app.js 加载时就会 connect()，
