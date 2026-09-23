@@ -13,8 +13,6 @@
 
 from __future__ import annotations
 
-import os
-
 from app.contracts import (
     PRIORITY_BACKGROUND,
     SOURCE_PERCEPTION,
@@ -25,16 +23,13 @@ from app.contracts import (
 from app.core.registry import get, register
 from app.core.rules import phrasing, scene
 
+# ★ `read_image` 已经搬到 `app/core/images.py`（第二层的检测器也要读同一份图，
+#   让检测器反过来 import 一个 layer 层次是歪的）。这里保留这个名字，
+#   免得别处 `from ...perception import read_image` 当场断掉。
+from app.core.images import read_image  # noqa: F401  (向后兼容的再导出)
+
 #: 场景描述的基准有效期。用户不需要在 2 秒内听到「前方有家咖啡店」。
 SCENE_TTL_MS = 5000
-
-
-def read_image(image_ref: str | None) -> bytes:
-    """读帧图像。读不到返回空 —— 不因为缺一张图把整条链路打断。"""
-    if not image_ref or not os.path.isfile(image_ref):
-        return b""
-    with open(image_ref, "rb") as f:
-        return f.read()
 
 
 @register("layer", "perception")

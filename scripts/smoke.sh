@@ -12,7 +12,15 @@ PORT="${PORT:-8000}"
 URL="http://127.0.0.1:$PORT"
 
 echo "==> 启动服务 (端口 $PORT)"
-uvicorn app.main:app --host 127.0.0.1 --port "$PORT" --log-level warning &
+# ★ 自检必须**离线、确定**：把实现钉死在 mock 上。
+#   `load_dotenv()` 不覆盖已存在的环境变量，所以这几个前缀一定生效。
+#
+#   为什么必须有（2026-09-23 实测）：开发机一旦配了真 key（VLM_PROVIDER=dashscope），
+#   `POST /v1/perception/describe` 这一拍会**真的去打云端** —— 而它没有图像，
+#   接口回 400，脚本当场红给你看，问题却不在代码里。顺带也省掉百度那条的配额。
+#   要验真实厂商，用 `python scripts/run_video.py <视频>`（那里有真图像）。
+VLM_PROVIDER=mock DETECTOR=mock ROUTER=builtin \
+  uvicorn app.main:app --host 127.0.0.1 --port "$PORT" --log-level warning &
 SRV=$!
 trap 'kill $SRV 2>/dev/null || true' EXIT
 

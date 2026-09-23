@@ -57,10 +57,34 @@ function onVideoBroken() {
   setFrameMsg(state.frameWarn, true);
 }
 
+//: 浏览器解不出这段编码时的原话。换素材是唯一出路，所以直接说怎么换。
+const CODEC_WARN = "这段视频浏览器解不出来（编码不支持，H.265 常见）—— 换成 H.264 的 mp4";
+
+/** 元数据都到了、可还是量不出画面 —— 这不是「还在加载」，是**解不出来**。
+ *
+ * ★ 实测（2026-09-23，真实 HEVC 素材）：`readyState=4`、`duration=11.6` 秒
+ *   （时间轴照走、`paused=false`）、`videoWidth=0`、画布上全黑 —— 而且
+ *   **既不抛异常也不触发 error 事件**。只说「视频未就绪」的话，用户会一直
+ *   等一个永远不会来的帧，正是本项目最忌讳的那种沉默失效。
+ *   `readyState>=1` 说明元数据已经解析出来了，此时还没有尺寸就只剩编码这一种解释。
+ */
+function decodingBroken() {
+  return video.readyState >= 1 && !video.videoWidth;
+}
+
+/** 编码问题要在**用户点「开始发帧」之前**就说出来，别等他发现自己空等了。 */
+function warnIfUndecodable() {
+  if (!state.frameWarn && decodingBroken()) {
+    state.frameWarn = CODEC_WARN;
+    setFrameMsg(state.frameWarn, true);
+  }
+}
+
 async function grabAndSend(source) {
   if (!video.videoWidth || video.paused) {
     if (!state.frameWarn) {        // 只报一次，别每拍刷屏
-      state.frameWarn = "视频未就绪，这一拍跳过";
+      // ★ 「解不出来」和「还没就绪」要分开报：前者等多久都不会好。
+      state.frameWarn = decodingBroken() ? CODEC_WARN : "视频未就绪，这一拍跳过";
       setFrameMsg(state.frameWarn, true);
     }
     return;
@@ -188,7 +212,12 @@ function toggleLoop() {
     state.loopTimer = null;
     btn.textContent = "开始发帧";
     btn.classList.remove("running");
-    setFrameMsg(state.frameWarn || "未开始", !!state.frameWarn);
+    // ★ 停发后不能把状态行打回「未开始」—— 明明发过 34 帧（实测看到过）。
+    //   一句话把「发生过的事」说没，和「静默失效」是同一类毛病。
+    setFrameMsg(
+      state.frameWarn || (stats.frames ? `已停 · 共发 ${stats.frames} 帧` : "未开始"),
+      !!state.frameWarn,
+    );
     log("已停止发帧", "dim");
     return;
   }
@@ -243,6 +272,14 @@ export function initSender() {
 
   // 404 时 <video> 的 error 事件在有些浏览器不冒出来，补一次显式探测
   video.addEventListener("error", onVideoBroken);
+  // ★ 解不出来的编码**没有** error 事件（实测 HEVC：readyState=4 却不给画面），
+  //   所以元数据到手后再自己瞄一眼 —— 不必等用户点了「开始发帧」才发现。
+  video.addEventListener("loadedmetadata", warnIfUndecodable);
+  // ★ 还要**立刻**查一次：视频是 <video> 自己开始加载的，模块执行很可能晚于
+  //   loadedmetadata —— 那就没有事件可等了。实测 HEVC 素材就是这样：
+  //   页面打开时 readyState 已经是 4，光靠监听器的话这条告警要等用户点了
+  //   「开始发帧」才出来。
+  warnIfUndecodable();
   fetch(video.getAttribute("src"), { method: "HEAD" })
     .then((r) => { if (!r.ok) onVideoBroken(); })
     .catch(() => {});

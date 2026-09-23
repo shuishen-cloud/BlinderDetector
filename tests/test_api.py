@@ -322,12 +322,19 @@ def test_upload_rejects_empty_image(client):
 
 
 def test_upload_leaves_no_temp_file(client):
-    """★ 临时帧必须在响应返回前删掉，否则跑一天就把磁盘塞满了"""
+    """★ 临时帧必须在响应返回前删掉，否则跑一天就把磁盘塞满了。
+
+    ★ 判据是「**这一次**上传有没有留下东西」，不是「整个目录是不是空的」——
+      `data/uploads` 是所有 app 实例共用的一个磁盘目录，开发机上同时跑着
+      uvicorn 时，那边的请求也会往这里写，写它的时候这条用例就会偶发红
+      （2026-09-23 实测撞上过一次）。判据要和被测对象对齐。
+    """
     from app.main import UPLOAD_DIR
 
+    before = {p.name for p in UPLOAD_DIR.iterdir()}
     _upload(client, source="perception")
     _upload(client, source="safety")
-    assert list(UPLOAD_DIR.iterdir()) == []
+    assert {p.name for p in UPLOAD_DIR.iterdir()} - before == set()
 
 
 # --------------------------------------------------------------------------
@@ -613,8 +620,28 @@ def test_frame_source_has_visible_status(client):
 
     js = client.get("/static/js/sender.js").text
     assert "setFrameMsg" in js, "状态行要由 JS 驱动"
-    for reason in ("视频未就绪", "视频加载失败", "上传失败"):
+    for reason in ("视频未就绪", "视频加载失败", "上传失败", "解不出来"):
         assert reason in js, f"这条失败路径必须写进状态行：{reason}"
+
+
+def test_frame_source_tells_codec_failure_apart_from_not_ready(client):
+    """★ 「解不出来」不能说成「还没就绪」—— 前者等多久都不会好。
+
+    实测（2026-09-23，把真实手机横拍的 HEVC/H.265 素材塞进 data/demo.mp4）：
+    `readyState=4`、`duration=11.6` 秒都读到了，时间轴照走（`paused=false`），
+    可 `videoWidth` 是 0，画布全黑，而且**既不抛异常也不触发 error 事件**
+    （`video.error === null`）—— 浏览器的 HEVC 解码支持是按平台给的，
+    Linux 上的 Chrome 就没有。
+
+    只说「视频未就绪」的话，用户会一直等一个永远不会来的帧：这正是
+    本项目最忌讳的沉默失效。所以判据要分开 —— 元数据到手了却还量不出
+    画面，那就只剩编码这一种解释，并且要在用户点「开始发帧」**之前**就说。
+    """
+    js = client.get("/static/js/sender.js").text
+    assert "解不出来" in js, "编码不支持这条失败路径必须单独说"
+    assert "decodingBroken" in js, "判据要落在「元数据到了但量不出画面」上"
+    assert "readyState" in js and "videoWidth" in js, "判据要靠这两个量"
+    assert "loadedmetadata" in js, "别等用户点了「开始发帧」、空等半天才发现"
 
 
 def test_frame_source_shows_the_frame_it_sent(client):
@@ -685,6 +712,40 @@ def test_phone_feed_has_fixed_height_and_scrolls(client):
         "必须是固定高度（height），不能随内容长"
     assert "overflow-y: auto" in block, "播报流必须能上下滑动查看"
     assert "overscroll-behavior: contain" in block, "内滚到底不该把整页也带着滚"
+
+
+def test_phone_feed_fades_at_the_bottom_edge(client):
+    """★ 播报流的下沿必须是**渐隐**，不是硬切。
+
+    动机（2026-09-23，真实素材）：框子按「约两条」定长（用例见上），而
+    真实播报比 mock 长 —— 一句 25 字的场景描述就折两行，第二条必然被切在
+    半行上。实测截图里就剩半个「注」字，看着像页面坏了。
+    渐隐是零 DOM 成本的提示：下面还有，能往上滑。
+
+    ★ 只许做下沿：上沿渐隐会糊住最新那条 —— 而最新那条是这条产品的主界面
+      （播报流只有这一处，用户/陪同者都靠它）。
+    """
+    css = client.get("/static/app.css").text
+    i = css.index(".phone .feed")
+    block = css[i:i + css[i:].index("}")]
+
+    assert "mask-image" in block, "下沿要有渐隐，别硬切"
+    assert "180deg" in block, "渐隐只做下沿（从上到下：实 → 透明）"
+    assert "linear-gradient(0deg" not in block, "上沿别糊住最新那条"
+
+
+def test_feed_keeps_reading_position_when_a_new_one_arrives(client):
+    """★ 新播报往顶上插时，别把正在看的人顶走。
+
+    播报是每几百毫秒一条的；`prepend` 会把已有内容整体下移，而
+    `scrollTop` 的数值不变 —— 正在往下翻的陪同者会发现画面自己跳了。
+    贴顶的人留在顶部（那正好是最新那条），翻了页的人补偿掉新增的高度。
+    """
+    js = client.get("/static/js/ui.js").text
+
+    assert "feed.prepend(el)" in js, "新条目仍然是插在顶部（最新在最上面）"
+    assert "scrollTop" in js, "要显式管住滚动位置"
+    assert "offsetHeight" in js, "翻过页的人要补偿掉新条目的高度"
 
 
 def test_sender_page_keeps_the_video_bounded(client):

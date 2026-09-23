@@ -18,10 +18,12 @@ from app.contracts import (
     RISK_DANGER,
     RISK_WARNING,
     SOURCE_SAFETY,
+    SOURCE_SYSTEM,
     Announcement,
     Frame,
     make_dedup_key,
     safety_detail,
+    system_detail,
 )
 from app.core.registry import get, register
 from app.core.rules import phrasing
@@ -50,13 +52,48 @@ class SafetyLayer:
         self.walk_speed_mps = walk_speed_mps
 
     async def handle(self, frame: Frame) -> list[Announcement]:
-        raw = await self.detector.detect(frame)
+        """检测 → 分级 → 措辞。
+
+        ★ 检测器抛异常时**不能**当成「前方没有障碍」—— 见下面 except 里的说明。
+        """
+        try:
+            raw = await self.detector.detect(frame)
+        except Exception as e:
+            # ★ 检测器哑了 ≠ 前方没有障碍。
+            #
+            #   返回空列表会让「这一拍没看见东西」和「这一拍根本没在看」长得
+            #   一模一样 —— 而用户听不出区别，会把沉默当成安全。所以这里必须
+            #   **说出声**：转成一条系统降级播报（`source=system`，前端按「系统」
+            #   渲染并计入意外统计）。
+            #
+            #   异常类型和信息一并带进 detail：吞掉它们等于把排查线索也吞了。
+            #   重复的降级由闸门按 dedup_key 去重，不会每拍刷一次。
+            return [self._degraded(e, frame)]
+
         obstacles = self._grade(raw)
         if not obstacles:
             # 前方无障碍 —— 不出声是对的，但「没出声」必须能和
             # 「系统哑了」区分开，那由 /v1/health 和降级通告负责
             return []
         return [self._announce(obstacles, frame)]
+
+    def _degraded(self, err: Exception, frame: Frame) -> Announcement:
+        """把「这一拍没在看」说出来。
+
+        ★ 文本只说结论和该怎么做，不播异常原文 —— 听的人要的是「现在我该怎么办」。
+          原文进 `detail`，给看日志的人。
+        """
+        reason = f"detector_error:{type(err).__name__}"
+        return Announcement(
+            text="安全预警暂时不可用，请放慢脚步",
+            ttl_ms=10_000,
+            dedup_key=f"system:degraded:{reason}",
+            source=SOURCE_SYSTEM,
+            priority=PRIORITY_IMPORTANT,
+            frame_id=frame.frame_id,
+            ts=frame.ts,
+            detail=system_detail(reason, message=str(err)[:200]),
+        )
 
     # ------------------------------------------------------------------
 

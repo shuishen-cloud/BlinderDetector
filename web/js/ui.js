@@ -135,7 +135,17 @@ function paint(a, visible = true) {
   ttl.appendChild(bar);
 
   el.append(head, txt, meta, ttl);
+
+  // ★ 顶插之后要把滚动位置交代清楚，否则正在看的人会被顶走：
+  //   prepend 让内容整体下移，而 scrollTop 的数值不变。
+  //   · 贴顶的人（绝大多数）：钉回 0 —— 那正好是最新那条。
+  //   · 翻了页的人：**交给浏览器自己的 scroll anchoring**（默认开着，
+  //     专门就是干这个的）。★ 别自己按 offsetHeight 手算补偿 ——
+  //     实测那是手动补偿和浏览器补偿打架，反而留下 27px 残余漂移。
+  const atTop = feed.scrollTop < 24;
   feed.prepend(el);
+  if (atTop) feed.scrollTop = 0;
+
   history.unshift(el);
   while (history.length > 100) history.pop().remove();
 

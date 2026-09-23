@@ -92,6 +92,15 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
   发包**（频率可调），这就是 design.md D2 的两条解耦流水线。
   视频 404 就先跑 `python scripts/make_test_video.py` —— `demo.mp4` 是
   gitignore 的产物，fresh clone 里没有。
+  ★ **换自己的素材要注意编码**：H.265/HEVC 在 Linux 的 Chrome 上**解不出来**
+  —— `readyState`、时长、时间轴全都正常，就是不给画面（`videoWidth=0`），
+  而且既不抛错也不触发 `error`。帧源页会直接说「这段视频浏览器解不出来」，
+  但根子得在素材上解决，ffmpeg 转一道 H.264 即可：
+
+  ```bash
+  ffmpeg -i 原始.mp4 -c:v libx264 -crf 23 -pix_fmt yuv420p \
+         -movflags +faststart -c:a aac data/demo.mp4
+  ```
 - **帧源 ②摄像头** —— 只留接口占位。接入时换成 `getUserMedia` 取流，
   复用同一个 `sendFrame()`，后端不用改。
 - **帧源 ③单张图片** —— 拖拽即可，不依赖 demo.mp4。
@@ -236,8 +245,9 @@ app/
       sos.py              求助状态机（幂等、升级链）
       route.py            无障碍策略（过滤 / 警告 / 措辞，不拿数据）
     layers/             四层编排（薄）
+    images.py           读帧图像 + 按魔数判 MIME（第一层和第二层共用）
     providers/          VLM 实现（mock / dashscope / zhipu / openai）
-    detectors/          障碍物检测器实现
+    detectors/          障碍物检测器实现（mock / qwen_vl）
     sources/            输入源（video / images）
     routers/            ★ 路线数据源（builtin 内置假路网 / baidu 百度地图）
   mock/fixtures.py      契约样例数据
@@ -317,6 +327,56 @@ DETECTOR=yolo
 `app/core/rules/` 里，所有检测器共用同一套安全策略。所以换模型不会
 让安全规则跟着变。
 
+仓库里现成有两个：
+
+| `DETECTOR=` | 是什么 | 延迟 |
+| :--- | :--- | :--- |
+| `mock`（默认） | 按帧序号返回预设场景。离线、确定，测试全跑它 | 0ms |
+| `qwen_vl` | 让云端 Qwen-VL 直接吐障碍物列表（`DETECTOR_MODEL`，默认跟 `VLM_MODEL` 走） | **1.9–5.7 秒**（实测） |
+
+#### `qwen_vl`：能用，但它违反 D2
+
+★ 先说清楚：**`design.md` D2 的原文是「第二层永远不能调 VLM」**，理由是
+延迟量级 —— 第二层是热路径，预算 200ms，而云端 VLM 单次 1–3 秒。
+上面那个 1.9–5.7 秒是同一台机器上跑真实素材量出来的，差着 10–30 倍。
+拿它做避障，播报出来时用户已经走过去了。
+
+那为什么还留着它：
+
+- **联调期**手边只有 VLM、没有端侧/本地检测模型时，它能把这层
+  整条「检测 → 分级 → 措辞」链路真的跑起来（而不是 mock 的固定场景），
+  规则层因此拿到真输入；
+- 它是「为什么不能一个模型全干」最直观的**对照实验**：同一段视频，
+  `DETECTOR=mock` 与 `DETECTOR=qwen_vl` 各跑一遍，延迟差一个数量级 ——
+  答辩讲 D2 时这就是证据，而不是一句断言。
+
+所以它必须是**显式选择**，任何时候都不是默认值。默认仍是 `mock`。
+
+```bash
+DETECTOR=qwen_vl
+DETECTOR_MODEL=qwen-vl-max      # 可省
+DETECTOR_TIMEOUT_MS=5000        # ★ 故意短于 VLM_TIMEOUT_MS（8 秒）
+python scripts/run_video.py data/demo.mp4 --fps 0.8 --layers safety
+```
+
+两条实现上的讲究，改它之前先读：
+
+- **距离是问模型要的估计值**，不是量出来的。所以每条都带
+  `distance_sigma_m = 0.40 × distance_m`（对齐 D3 说的「单目深度误差
+  30–50%」），由悲观分级去兜底。**别为了「看起来更准」把这个比例调小** ——
+  调小 sigma 就是让分级变乐观，正好把 D3 要防的那类事故放进来。
+- **失败必须看得见**：超时 / 401 / 429 / 返回的不是 JSON，一律抛异常，
+  **绝不返回空列表**。返回空列表等于说「前方没有障碍」，而真相是
+  「这一拍根本没在看」—— 用户听不出区别。检测器哑了由
+  `layers/safety.py` 接住，转成一条**听得见**的播报
+  （「安全预警暂时不可用，请放慢脚步」，`source=system`）：
+  这两件事必须长得不一样，用例在 `tests/test_qwen_vl_detector.py`。
+
+> 真实检测模型（YOLO 那一类）该走哪条路 —— 服务端跑还是端侧跑 ——
+> 还没定，见 [新功能与接口改动.md](新功能与接口改动.md) §1.2。
+> 定了之后新实现放 `app/core/detectors/` 里加个 `@register` 就行，
+> 这个文件和它上面的规则层都不用动。
+
 ### 换地图数据源（第三层）
 
 第三层把「路线数据从哪来」和「无障碍策略怎么定」分开了：
@@ -381,6 +441,7 @@ pytest -v
 | `test_sos.py` | 幂等、升级链、绝不自动拨 120 |
 | `test_route.py` | 无障碍过滤、导航播报、**「已避开」与「请注意」的诚实性边界** |
 | `test_baidu_router.py` | 百度响应解析（含 status!=0、缺字段、空路线、turn_type 容错） |
+| `test_qwen_vl_detector.py` | 障碍物解析（模型乱讲话/编类型/坏距离）、**检测器哑了必须说出声** |
 
 ---
 

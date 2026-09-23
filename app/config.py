@@ -11,6 +11,12 @@ load_dotenv()
 # 实现选择（见 app/core/registry.py）
 VLM_PROVIDER: str = os.getenv("VLM_PROVIDER", "mock")
 DETECTOR: str = os.getenv("DETECTOR", "mock")
+#: 检测器用的模型名（只有 `DETECTOR=qwen_vl` 这类实现会读它）。
+#: 留空则跟着 `VLM_MODEL` 走 —— 通常就是同一个多模态模型。
+DETECTOR_MODEL: str = os.getenv("DETECTOR_MODEL", "")
+#: 第二层的超时。★ 故意比 `VLM_TIMEOUT_MS` 短：第二层是热路径（预算 <200ms），
+#: 用第一层那 8 秒的耐心会让一帧卡在那里，而它本来就是最慢的那个实现。
+DETECTOR_TIMEOUT_MS: int = int(os.getenv("DETECTOR_TIMEOUT_MS", "5000"))
 FRAME_SOURCE: str = os.getenv("FRAME_SOURCE", "video")
 
 # 云端 VLM（本期不接，仅占位。三家都提供 OpenAI 兼容端点）
