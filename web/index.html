@@ -142,15 +142,19 @@
              只会让人以为「说完还得再按一下」，多一步、多一个要摸的东西。
              两条路在 `js/nav.js::submitRoute()` 上合成一条，那是唯一的出口。 -->
       <div class="row">
-        <!-- 起点默认就是当前位置，进页面自动取 —— 它现在是**重试**用的：
-             定位失败（没权限 / 不是 https / 不是 localhost）时再按一次。 -->
-        <button class="btn" id="geoBtn" title="重新用手机定位取起点">重新定位</button>
-        <!-- 起点**是从哪算的**必须写在明面上：看不到屏幕的人靠这行字（读屏）
-             确认系统知道他在哪；陪同者靠它判断有没有真的定到。
+        <!-- ★ 起点：**显示框**，不是按钮（2026-09-23 改）。
+             框里写的就是「起点是从哪算的」，点一下重新定位 —— 状态与动作是
+             同一件事，合成一个东西，少一个要用户去配对的按钮。
+             进页面自动取；拿不到就如实写「默认坐标（原因）」并标黄 + 播报。
              ★ 不加 aria-live：要出声的只有**降级**那一种情况，走 nav.js 的
                localNote（TTS / 读屏二选一，见 ui.js::paintTts 的规矩）；
-               常态下没有新消息就不该有声音。 -->
-        <p class="hint" id="originNote">起点：定位中…</p>
+               常态下没有新消息就不该有声音。
+             ★ 文字在 #geoTxt 里（和 talkTxt / ttsTxt / hTxt 一个写法），
+               读屏读到的是 aria-label（含「点击重新定位」）。 -->
+        <button class="btn geo wide" id="geoBtn" type="button" title="点击重新定位起点">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21.5s6.8-6.2 6.8-11.2a6.8 6.8 0 1 0-13.6 0c0 5 6.8 11.2 6.8 11.2z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><circle cx="12" cy="10.3" r="2.5" fill="none" stroke="currentColor" stroke-width="1.7"/></svg>
+          <span id="geoTxt">起点：定位中…</span>
+        </button>
       </div>
 
       <details class="adv">

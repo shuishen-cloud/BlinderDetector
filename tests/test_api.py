@@ -1023,9 +1023,13 @@ def test_navigation_origin_defaults_to_where_the_user_is(client):
         "自动定位失败必须出声（那一刻没有任何按钮被按过），不能只在页面上变个色"
     assert "paintOrigin(null, why)" in body, "同时要把「用的是默认坐标」写在页面上"
 
+    # 起点状态就写在那个**显示框**上（它同时是重新定位的按钮，2026-09-23）：
+    # 状态与动作合成一个东西，少一个要用户去配对的按钮。
     html = html_body(client)
-    assert 'id="originNote"' in html, "起点状态要有地方显示（读屏也要读得到）"
-    assert 'id="geoBtn"' in html, "手动重试定位的入口要留着"
+    assert 'id="geoBtn"' in html and 'id="geoTxt"' in html, \
+        "起点显示框（读数 + 点击重新定位）要在页面上"
+    assert "aria-label" in js and "。点击重新定位" in js, \
+        "读屏要知道那个框是可以按的，不能只当它是一行字"
 
 
 def test_voice_input_says_so_when_it_cannot_work(client):

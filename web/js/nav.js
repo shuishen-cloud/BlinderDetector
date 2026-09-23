@@ -6,11 +6,14 @@
  *   一环。可那个按钮对用户已经完全多余了：语音是**松开就出发**，打字走回车。
  *   把路抽成一个函数，两条输入都调它，按钮就可以删掉了（少一个要用户找的东西）。
  *
- * ★ 起点 = 当前位置，自动取，不是按钮。
+ * ★ 起点 = 当前位置，自动取。
  *   这一页服务的是**正在走的人**，起点就是「他此刻在哪」，没有第二种可能。
  *   原来默认写死一组太原工业学院的坐标、旁边放一个「用当前位置」——
  *   把一个本来确定的事实变成了要用户去按一下的选项（还得先意识到要按）。
- *   现在：进页面就定位；拿不到就**如实说拿不到**并把默认值摆明（`.hint.warn`），
+ *   现在页面上的那个框是**读数 + 重试**：写的就是起点从哪算的，点一下重取
+ *   （见 index.html 里 `#geoBtn` / `#geoTxt`。原先是一个「重新定位」按钮 +
+ *   旁边一行状态字两块，读屏用户得先弄清那行字讲的是哪件事）。
+ *   现在：进页面就定位；拿不到就**如实说拿不到**并把默认值摆明（显示框标黄），
  *   而不是默默用一组假坐标规划出一条煞有介事的路线。
  */
 
@@ -54,23 +57,35 @@ export async function submitRoute() {
   }
 }
 
-/** 起点状态写在这行字上（它同时是给读屏的状态区）。 */
+/** 起点状态就写在**显示框**上（2026-09-23 改）。
+ *
+ *  ★ 为什么状态和动作合成一个东西：原先是一个「重新定位」按钮 + 旁边一行状态字
+ *    两块。看不见屏幕的人得先弄清那行字讲的是哪件事、又要去按哪个按钮；
+ *    而这两件事本来就是同一件 —— 「起点是从哪算的」和「让它重新算一遍」。
+ *    现在框里写的就是状态，点框就是重新定位（`aria-label` 把动作也说出来）。
+ *
+ *  ★ 降级必须看得见、也读得出：框里写「默认坐标（原因）」并标黄，
+ *    读屏念到的也是同一句（外加「点击重新定位」）—— 用户听到的路线是从哪
+ *    出发的，这是他唯一的线索。
+ */
 function paintOrigin(accuracy, why) {
-  const note = $("originNote");
-  if (why) {
-    // ★ 降级必须看得见、也读得出：这行字是「你听到的路线是从哪出发的」的唯一线索。
-    note.textContent = `起点：默认坐标（${why}）—— 可在「起终点坐标」里手动改`;
-    note.classList.add("warn");
-    return;
-  }
-  note.textContent = `起点：当前位置（精度约 ${Math.round(accuracy)} 米）`;
-  note.classList.remove("warn");
+  const btn = $("geoBtn");
+  const txt = $("geoTxt");
+  const state = why
+    ? `默认坐标（${why}）`
+    : `当前位置（精度约 ${Math.round(accuracy)} 米）`;
+  txt.textContent = `起点：${state}`;
+  // ★ 动作写进 aria-label：框里那行字是可读的**状态**，而它同时是个按钮 ——
+  //   不把「点它可以重新定位」说出来，读屏用户只会以为那是一块文字。
+  btn.setAttribute("aria-label", `起点：${state}。点击重新定位`);
+  btn.classList.toggle("warn", !!why);
 }
 
-/** 取当前位置。`manual` = 用户按了「重新定位」，这时要出声确认。 */
+/** 取当前位置。`manual` = 用户点了那个框（重新定位），这时要出声确认。 */
 function locate({ manual }) {
   const btn = $("geoBtn");
-  const reset = () => { btn.disabled = false; btn.textContent = "重新定位"; };
+  let done = false;
+  const finish = () => { done = true; btn.disabled = false; };
 
   if (!navigator.geolocation) {
     paintOrigin(null, "这个浏览器不提供定位");
@@ -78,7 +93,7 @@ function locate({ manual }) {
     return;
   }
   btn.disabled = true;
-  if (manual) btn.textContent = "定位中…";
+  $("geoTxt").textContent = "起点：定位中…";
 
   navigator.geolocation.getCurrentPosition(
     (pos) => {
@@ -90,7 +105,7 @@ function locate({ manual }) {
       if (manual) {
         confirmAction(`起点已更新（精度约 ${Math.round(pos.coords.accuracy)} 米）`, "ok");
       }
-      reset();
+      finish();
     },
     (err) => {
       // 定位只在 https 或 localhost 下可用 —— 局域网 IP 直连会被浏览器拒绝。
@@ -108,10 +123,20 @@ function locate({ manual }) {
           { priority: 2, hapticKind: "double" },
         );
       }
-      reset();
+      finish();
     },
     { enableHighAccuracy: true, timeout: 8000, maximumAge: 30_000 },
   );
+
+  // 兜底：某些实现两个回调都不来（实测遇到过），框不能永远停在「定位中…」
+  // —— 那是**沉默失效**：用户会一直等一个永远不会来的结果。
+  setTimeout(() => {
+    if (done) return;
+    paintOrigin(null, "定位没有响应");
+    if (manual) confirmAction("定位没有响应，请重试", "err");
+    else localNote("起点定位没有响应，这次按默认坐标规划。", { priority: 2, hapticKind: "double" });
+    btn.disabled = false;
+  }, 9000);
 }
 
 export function initOrigin() {

@@ -191,10 +191,7 @@ main {
 .field span { font-size: 11px; }
 
 .hint { margin: 11px 0 0; font-size: 12px; color: var(--dim); }
-/* 降级提示（起点没定到、只能用默认坐标）。★ 颜色只是第三重编码 ——
-   这行字本身就写着「默认坐标（原因）」，颜色只是让它**在该被注意到时**
-   自己跳出来；不是靠颜色来表达「出事了」。 */
-.hint.warn { color: var(--warn); }
+
 .hint b { color: var(--fg-2); font-weight: 600; }
 code {
   font: 11.5px/1.5 var(--mono); color: var(--fg-2);
@@ -680,6 +677,24 @@ video { display: block; width: 100%; }
 }
 @keyframes listen-pulse { 50% { box-shadow: 0 0 0 7px rgba(91, 157, 255, .12); } }
 .phone .btn.hold.dead { color: var(--bad); border-color: rgba(251, 113, 133, .5); }
+
+/* 起点显示框（2026-09-23 改）：它既是「起点是从哪算的」的读数，也是那个
+   重新定位的按钮 —— 两件事本来就是同一件。
+   ★ 底色压暗、左对齐：让它读起来像一块**读数框**，而不是又一颗要按的按钮
+     （这一页上要按的东西越少越好）。
+   ★ 颜色只是第三重编码：框里的字永远写着「默认坐标（原因）」。 */
+.phone .btn.geo {
+  display: flex; align-items: center; justify-content: flex-start;
+  gap: 9px; width: 100%; text-align: left; line-height: 1.35;
+  font-weight: 500; background: rgba(0, 0, 0, .3); border-color: var(--line);
+}
+.phone .btn.geo svg { width: 17px; height: 17px; flex: none; color: var(--accent); }
+.phone .btn.geo.warn { color: var(--warn); border-color: rgba(251, 191, 36, .35); }
+.phone .btn.geo.warn svg { color: var(--warn); }
+/* 定位中不把读数整块调暗（.btn:disabled 的 opacity: .4）—— 那会让人以为
+   「起点」这件事本身坏了。忙不忙由框里的字说（「起点：定位中…」）。 */
+.phone .btn.geo:disabled { opacity: 1; cursor: progress; }
+.phone .btn.geo #geoTxt { min-width: 0; }
 
 .btn.wide { flex: 1; min-height: 46px; font-size: 15.5px; font-weight: 600; }
 .btn.icon { padding: 6px; min-width: 36px; }
