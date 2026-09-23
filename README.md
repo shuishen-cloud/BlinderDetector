@@ -121,13 +121,29 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 「识别中…」，而用户以为自己还在录）。浏览器不支持（Firefox 至今没有）时，
 按钮直接写「语音不可用」并说明原因，不假装能用。
 
-还有一类失败值得单说：**语音识别用的是浏览器厂商的云服务**（Chrome / Edge 走
-Google，Safari 走 Apple），所以 Chromium 裸构建、或到 Google 的网络不通时，
-长按松开后 `error` 就是字符串 `network`。那不是本项目的后端断了 —— 这两件事
-必须分开说，否则用户会去查一个根本没坏的东西。所以这一条单列措辞（琥珀标记
-+ 一条能翻回来重看的播报：「语音识别靠浏览器厂商的云服务，现在连不上 —— 不是
-本项目的后端。请直接打字。」），第二次起只说短句。按钮**不会**被标成「语音
-不可用」：网络是会回来的，标死等于假红，用户从此不再试一个其实能用的功能。
+**识别有两条通道，服务端那条优先。** 默认走**服务端**：端侧把录音转成
+16 kHz 单声道 WAV（`decodeAudioData` + `OfflineAudioContext` 重采样 + 自己封
+WAV 头），传到 `POST /v1/asr`（见 [docs/api-contract.md](docs/api-contract.md)
+§4.3），回来的文本填进目的地那一格。转码放端侧做是为了**后端不引入 ffmpeg**
+（Termux 上装不动），顺带省一次上传。
+
+> **为什么不让浏览器那条当默认。** 浏览器识别走的是**厂商的云**（Chrome / Edge
+> 走 Google，Safari 走 Apple），key 烘在浏览器二进制里、页面里无处可配：国内
+> 网络基本不可用（实测 `error === "network"`），Chromium 裸构建干脆没有，而且
+> 出了事我们既看不到失败率也换不掉它 —— 这一环等于不受控。服务端识别把这一环
+> 拿回自己手里，代价只是松手后多一个往返（`识别中…`）。
+
+两条通道的取舍写在 `web/js/voice.js` 的文件头。服务端这条因**配置**问题不可用
+（`ASR=none` / 名字没注册 / 凭据没配齐）时，端侧会**出声告知**再切到浏览器那
+条 —— 换了通道不说，用户会以为自己按错了。暂时性失败（超时 / 429）**不换道**，
+只劝重试；第二次起才劝打字。
+
+浏览器那条自己也会失败，而且很容易被误会：`error === "network"` 说的是**厂商
+的云**连不上，**不是本项目的后端断了**。这两件事必须分开说，否则用户会去查一个
+根本没坏的东西。所以这一条单列措辞（琥珀标记 + 一条能翻回来重看的播报：「语音
+识别靠浏览器厂商的云服务，现在连不上 —— 不是本项目的后端。请直接打字。」），
+第二次起只说短句。按钮**不会**被标成「语音不可用」：网络是会回来的，标死等于
+假红，用户从此不再试一个其实能用的功能。
 
 ### 播报出口 —— 排序 / 打断在前端（`web/js/speech.js`）
 
@@ -489,9 +505,48 @@ ROUTER=amap
 就跳过 HTTP 直接读本地文件 —— 解析、警告、降级整条链都能验
 （`data/baidu_walking_sample.json` 是现成样本）。
 
+### 接自己的语音识别（目的地那一格）
+
+```python
+# app/core/asr/whisper.py
+from app.core.asr.base import ASRError
+from app.core.registry import register
+
+@register("asr", "whisper")
+class WhisperASR:
+    name = "whisper"
+    #: health() 为 False 时对外报的原因码（端侧据此选措辞）
+    unavailable_reason = "asr_misconfigured"
+
+    async def transcribe(self, audio: bytes, fmt: str) -> str:
+        ...   # 听不清返回空串；**没能识别必须抛 ASRError**
+    async def health(self) -> bool:
+        return True
+```
+
+```bash
+ASR=whisper
+```
+
+**接实现时别踩三件事：**
+
+- **能识别的实现返回文本，识别不了必须抛 `ASRError`** —— 绝不返回空串。
+  空串的含义是「听到了但没听清」，异常的含义是「这一拍根本没在听」，端侧对
+  这两件事的措辞完全不同。
+- **凭据缺失不要在 `__init__` 里抛异常**：`registry.get()` 就在请求处理路径上，
+  抛出去会直接变成 500，降级路径根本来不及触发（`routers/baidu.py` 已经踩过）。
+  用 `health()` 返回 `False` 表达「现在用不了」，原因码放 `unavailable_reason`。
+- `ASR=none`（默认）是**合法状态**，不是故障：它表示「没有接识别」，端侧会退回
+  浏览器那条，两条都不行才写「语音不可用」并劝打字。
+
+> ★ 语音识别**不进 `/v1/health` 的降级列表**（只出现在 `impls` 那份信息性清单
+> 里）。它不是四层核心链路（目的地还能打字），缺了它由端侧在按下的那一刻如实
+> 说出来；挂进降级列表只会让「降级」这枚徽章长期亮着，把 VLM / 检测器 / 地图
+> 那三个**真的**降级淹掉。
+
 ### 其他
 
-可注册的类别：`vlm` / `detector` / `layer` / `framesource` / `router`。
+可注册的类别：`vlm` / `detector` / `layer` / `framesource` / `router` / `asr`。
 `GET /v1/health` 会列出所有已注册的实现。
 
 ---

@@ -51,3 +51,20 @@ def _offline_vlm(monkeypatch):
     monkeypatch.setattr(config, "DETECTOR", "mock")
     monkeypatch.setattr(config, "VLM_API_KEY", "")
     monkeypatch.setattr(config, "VLM_BASE_URL", "")
+
+
+@pytest.fixture(autouse=True)
+def _offline_asr(monkeypatch):
+    """语音识别钉死在 `none` 上 —— 理由与感知层**逐字相同**。
+
+    ★ `.env` 里配着 `ASR=dashscope`（开发机上就是），而 `ASR_API_KEY` 默认
+      跟着 `VLM_API_KEY` 走 —— 上一条夹具清掉的是 `config.VLM_API_KEY`，
+      清不掉**已经解析好**的 `config.ASR_API_KEY`。所以不钉这一条的话，
+      `/v1/asr` 的用例会真的把音频传上云端：慢、要钱、结果还不确定。
+
+    ★ 也一并清掉地址与 key：哪天代码绕开 `ASR=none` 直接去实例化实现，
+      它该当场抛「需要 ASR_API_KEY」，而不是安静地把请求发出去。
+    """
+    monkeypatch.setattr(config, "ASR", "none")
+    monkeypatch.setattr(config, "ASR_API_KEY", "")
+    monkeypatch.setattr(config, "ASR_BASE_URL", "")

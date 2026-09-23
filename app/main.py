@@ -4,6 +4,7 @@
 
     app/api/routes.py     路由表 + 小 handler（tick / health / 调试台）
     app/api/uploads.py    ★ 统一帧入口 POST /v1/frame（multipart）
+    app/api/speech.py     ★ POST /v1/asr —— 音频 → 文本（唯一不返回 Announcement 的业务入口）
     app/api/envelope.py   统一信封：入 Frame，出 Announcement
     app/api/hub.py        WS 播报通道
     app/core/             业务逻辑（各层编排、规则、provider）
@@ -18,6 +19,7 @@
     POST /v1/emergency/cancel      取消求助 / 取消跌倒确认
     POST /v1/emergency/tick        推进紧急状态机时钟
     POST /v1/frame                 ★ 统一帧入口（multipart 上传图像）
+    POST /v1/asr                   语音识别（multipart 音频 → 文本，见 api/speech.py）
     GET  /v1/health                健康检查 + 降级状态
     GET  /v1/frontend-config       调试台地图要的浏览器端 AK（从 .env 下发）
     WS   /v1/stream                统一播报下发

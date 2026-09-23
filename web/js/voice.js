@@ -17,6 +17,22 @@
  *   它对用户完全多余，而留着它就等于说「这条路上有一个必须存在的按钮」。
  *   把路抽成 submitRoute() 之后，两条输入方式直连同一个出口。）
  *
+ * ★★ 识别有**两条通道**，这是本模块最要紧的一件事（2026-09-23 加）★★
+ *
+ *   甲·服务端（默认）：录音 → `POST /v1/asr` → 文本。自己家的，看得见日志、
+ *       换得掉实现、失败能如实降级。**优先用它。**
+ *   乙·浏览器：`SpeechRecognition`（走 Chrome→Google / Safari→Apple 的云）。
+ *       甲不可用时才用；它的 `error` 我们无能为力（`network` 就是它的原话）。
+ *
+ *   为什么不让浏览器那条当默认：实测在国内网络 / Chromium 裸构建下它必然报
+ *   `network`，而我们既看不到失败率也换不掉它 —— 这一环等于不受控。服务端
+ *   识别把这一环拿回自己手里，代价是松手后多一个往返（`识别中…`）。
+ *
+ * ★ 自己念的提示音会被自己录进去：服务端通道是**真录音**，「请说目的地」
+ *   这句提示音和用户的声音一起进了麦克风，所以 `stripPrompt()` 会把识别结果里
+ *   混进来的提示语削掉。根上的解法是提示音换成短哔声（或者真机上的回声消除），
+ *   这里先按「说得准」这一条把它削干净 —— 让用户念一遍提示语不是他的错。
+ *
  * ★ 三通道反馈（和紧急按钮一个规矩）：眼睛看按钮文字、耳朵听状态、手指感震动。
  *   录的时候听不见「现在在录」是最糟的 —— 用户会对着空气说，然后以为系统坏了。
  */
@@ -24,21 +40,39 @@
 import { $ } from "./dom.js";
 import { log } from "./log.js";
 import { toast, speak, haptic, localNote } from "./ui.js";
+import { postAsr } from "./net.js";
 // ★ 导航请求的**唯一**出口（打字那条路也走它）—— 见 nav.js 的头注释。
 import { submitRoute } from "./nav.js";
+
+//: 服务端识别要的采样率与声道。语音识别的标准输入，10 秒 ≈ 320 KB。
+//: 44.1k 立体声 10 秒是 1.7 MB —— 弱网上多出来的每一秒都是失败率。
+const TARGET_RATE = 16000;
+
+//: 单次录音的**上限**。按住不放不能录到天荒地老（文件大小与识别延迟都会失控）。
+//: 到点自动停并按这一段落识别，同时**说出来** —— 静默截断等于偷偷丢用户的话。
+const MAX_RECORD_MS = 15_000;
 
 /** 浏览器给的构造器。Chrome / Edge 有前缀版，Safari 也有；Firefox 至今没有。 */
 function RecogCtor() {
   return window.SpeechRecognition || window.webkitSpeechRecognition || null;
 }
 
-export function voiceInputAvailable() { return !!RecogCtor(); }
+/** 能不能走服务端那条（录音 + 解码 + 重采样，三样都得有）。 */
+function recorderAvailable() {
+  return !!(
+    window.MediaRecorder
+    && navigator.mediaDevices?.getUserMedia
+    && (window.AudioContext || window.webkitAudioContext)
+  );
+}
+
+export function voiceInputAvailable() { return recorderAvailable() || !!RecogCtor(); }
 
 /** 一句话说清「为什么用不了」——不能只说「不支持」。 */
 function whyUnavailable() {
-  if (!RecogCtor()) return "这个浏览器不支持语音输入（Firefox 至今没有），请直接打字";
   if (!window.isSecureContext) return "语音输入需要 HTTPS 或 localhost，请换地址打开";
-  return "语音输入不可用，请直接打字";
+  if (RecogCtor()) return "这个浏览器没有可用的语音识别，请直接打字";
+  return "这个浏览器不支持语音输入（Firefox 至今没有），请直接打字";
 }
 
 const LABELS = {
@@ -62,7 +96,8 @@ function paint(btn, state) {
  *    `.video-strip` 上栽过同类跟头。
  */
 function handOver(text) {
-  $("dest").value = text;                 // ← 和打字完全同一个落点
+  $("talkBtn").classList.remove("warn");   // 认出来了就把降级标记摘掉
+  $("dest").value = text;                  // ← 和打字完全同一个落点
   log(`语音目的地：${text}`, "ok");
   toast(`目的地：${text}`, "ok");
   haptic("short");
@@ -82,10 +117,99 @@ function complain(msg, kind = "err") {
   haptic("double");
 }
 
+/** 削掉识别结果里混进来的**我们的提示音**。
+ *
+ *  ★ 服务端通道是真录音：按下时念的「请说目的地」与用户的声音一起进了麦克风，
+ *    所以结果可能是「请说目的地，我要去太原站」。用户没有念错什么，是我们
+ *    把自己的声音录了进去 —— 削掉是本分，不是宽容。
+ *  ★ 只削**开头**：用户句中真的说了这几个字（比如让朋友复述）不该被误伤。
+ */
+const PROMPT_WORDS = /^(请说目的地|请说|说吧|说话)[，,。.、！!\s]*/;
+export function stripPrompt(text) {
+  return String(text || "").replace(PROMPT_WORDS, "").trim();
+}
+
+/** Float32 [-1,1] 单声道 → 16-bit PCM WAV。标准 44 字节头。 */
+function encodeWav(samples, rate) {
+  const buf = new ArrayBuffer(44 + samples.length * 2);
+  const v = new DataView(buf);
+  const put = (off, s) => { for (let i = 0; i < s.length; i++) v.setUint8(off + i, s.charCodeAt(i)); };
+  put(0, "RIFF");  v.setUint32(4, 36 + samples.length * 2, true);
+  put(8, "WAVE");  put(12, "fmt ");
+  v.setUint32(16, 16, true);            // fmt 块长度
+  v.setUint16(20, 1, true);             // PCM
+  v.setUint16(22, 1, true);             // 单声道
+  v.setUint32(24, rate, true);
+  v.setUint32(28, rate * 2, true);      // 字节率
+  v.setUint16(32, 2, true);             // 块对齐
+  v.setUint16(34, 16, true);            // 位深
+  put(36, "data"); v.setUint32(40, samples.length * 2, true);
+  let off = 44;
+  for (let i = 0; i < samples.length; i++, off += 2) {
+    const s = Math.max(-1, Math.min(1, samples[i]));
+    v.setInt16(off, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+  }
+  return new Blob([buf], { type: "audio/wav" });
+}
+
+/** 录下来的音频（webm/opus、m4a…）→ 16k 单声道 WAV。
+ *
+ *  ★ 为什么要转：服务端那台厂商只认 wav / mp3 这类**文件格式**。浏览器录出来的
+ *    是 webm/opus（Chrome）或 mp4/aac（Safari），不能直接发。转码放端侧做还有
+ *    两个好处：省一次上传（16k 单声道比 44.1k 立体声小十倍），以及不必在后端
+ *    引入 ffmpeg 这种重依赖（Termux 上装不动）。
+ *  ★ 重采样交给 `OfflineAudioContext` —— 浏览器的重采样比自己写线性插值靠谱，
+ *    而且顺手把立体声下混成单声道。
+ */
+async function blobToWav(blob) {
+  const AC = window.AudioContext || window.webkitAudioContext;
+  const ctx = new AC();
+  try {
+    const decoded = await ctx.decodeAudioData(await blob.arrayBuffer());
+    const frames = Math.max(1, Math.ceil(decoded.duration * TARGET_RATE));
+    const off = new OfflineAudioContext(1, frames, TARGET_RATE);
+    const src = off.createBufferSource();
+    src.buffer = decoded;
+    src.connect(off.destination);
+    src.start();
+    const mono = await off.startRendering();
+    return encodeWav(mono.getChannelData(0), TARGET_RATE);
+  } finally {
+    // ★ 必须关：每按一次开一个 AudioContext，不关的话浏览器会在第 6 个左右
+    //   开始拒绝（每个页面有上限），而现象是「按第 N 次就没反应了」。
+    try { await ctx.close(); } catch { /* 老实现不返回 promise，忽略 */ }
+  }
+}
+
+/** 服务端给的降级原因 → 说得出口的话。
+ *
+ *  ★ 一律不带厂商原文：那是给排查的人看的（进 `log`），念给用户听只会变成
+ *    一串他不该负责的细节。这里是「哪件事坏了」的短句。
+ */
+const ASR_REASONS = {
+  asr_unavailable: "没有接（ASR=none）",
+  asr_misconfigured: "配置没配齐（少 key 或地址）",
+  asr_not_registered: "配置的名字没注册过",
+  asr_failed: "调用失败",
+  asr_error: "出错",
+};
+
+/** 永久性不可用（配置问题）—— 换引擎；暂时性失败只重试。
+ *
+ *  ★ `asr_misconfigured` 也算永久：`.env` 不会自己变好。它和 `asr_unavailable`
+ *    的措辞**必须分开** —— 一个该去查 `.env`，一个本来就该退回浏览器那条，
+ *    合成一句会让人去查一个根本没坏的东西。
+ */
+function isPermanent(reason) {
+  return reason === "asr_unavailable"
+    || reason === "asr_misconfigured"
+    || reason === "asr_not_registered";
+}
+
 /** 已经连不上过一次了 —— 之后只说短句，别再念一遍整段解释。 */
 let netWarned = false;
 
-/** 语音识别连不上**浏览器厂商的云服务**（`error === "network"`）。
+/** 浏览器那条通道连不上**浏览器厂商的云服务**（`error === "network"`）。
  *
  *  ★ 起因（2026-09-23，实测）：Chromium 裸构建里不带语音服务，或到 Google
  *    的网络不通时，长按松开后 `error` 就是字符串 `network`。原兜底分支把它
@@ -97,7 +221,7 @@ let netWarned = false;
  *  ★ 走 localNote 而不是 speak：它同时喂 TTS、读屏（TTS 关时）和播报流 ——
  *    这条解释要能**翻回来重看**，因为它说了「该改用打字」这件以后还有用的事。
  *
- *  ★ 不把按钮切成「语音不可用」（那是给「这个浏览器根本没有语音 API」留的）：
+ *  ★ 不把按钮切成「语音不可用」（那是给「一条通道都没有」留的）：
  *    网络是会回来的，标成不可用等于**假红**，用户从此不再试一个其实能用的
  *    功能。只标琥珀 + 说清怎么绕过去（打字），并且允许继续按住重试。
  */
@@ -118,9 +242,11 @@ function complainNetwork() {
 
 export function initVoiceInput() {
   const btn = $("talkBtn");
-  const ctor = RecogCtor();
 
-  if (!ctor) {
+  // ★ 引擎优先级：服务端 → 浏览器 → 没有。见文件头「两条通道」。
+  let engine = recorderAvailable() ? "server" : (RecogCtor() ? "browser" : null);
+
+  if (!engine) {
     // ★ 不能假装能用（和「声音：不可用」同一个规矩）：按钮上直接写实话，
     //   点一下给出原因 —— 用户会知道该去打字，而不是对着它按半天。
     paint(btn, "dead");
@@ -128,9 +254,21 @@ export function initVoiceInput() {
     return;
   }
 
-  let rec = null;
-  let listening = false;    // 手指按着
-  let heard = false;        // 这一次收到过结果没有
+  let listening = false;   // 手指按着
+  let heard = false;       // 这一次收到过结果没有
+  let serverFails = 0;     // 服务端连续失败次数（第二次起改口径）
+
+  // ---- 引擎甲：服务端（录音 → /v1/asr）----
+  let stream = null;       // 麦克风流。**录完立刻关** —— 不留常驻录音
+  let rec = null;          // MediaRecorder
+  let chunks = [];
+  let timedOut = false;    // 这一次是不是录满上限被截断的
+
+  const closeStream = () => {
+    if (stream) stream.getTracks().forEach((t) => t.stop());
+    stream = null;
+    rec = null;
+  };
 
   const finish = () => {
     listening = false;
@@ -138,18 +276,182 @@ export function initVoiceInput() {
     paint(btn, "idle");
   };
 
-  const start = (e) => {
+  /** 松开之后：转码 → 上传 → 拿文本。整条异步链路上的每一步都要收尾。 */
+  async function uploadRecording() {
+    const mime = chunks[0]?.type || "audio/webm";
+    const blob = new Blob(chunks, { type: mime });
+    chunks = [];
+    paint(btn, "busy");
+
+    if (timedOut) {
+      timedOut = false;
+      // ★ 录音已经停了才说这句 —— 早一步就会被自己录进去。
+      localNote(`录满 ${MAX_RECORD_MS / 1000} 秒，先按到这里识别。`, { priority: 2 });
+    }
+
+    let wav;
+    try {
+      wav = await blobToWav(blob);
+    } catch (e) {
+      log(`语音输入：录音转码失败（${e?.name || e}）`, "err");
+      complain("这段录音没能处理，请再按住说一次");
+      paint(btn, "idle");
+      return;
+    }
+
+    const fd = new FormData();
+    // ★ 用 `append(name, blob, filename)` 而不是 new File(...)：少一处
+    //   `File` 构造器的兼容性赌注（老 Safari 没有），浏览器会按文件名补 mime。
+    fd.append("audio", wav, "voice.wav");
+    fd.append("format", "wav");
+
+    let b;
+    try {
+      b = await postAsr(fd);
+    } catch (e) {
+      // 网络断了 / 后端没起来。和「服务端说它不会识别」是两件事，措辞分开。
+      log(`语音输入：上传失败 ${e.message}`, "err");
+      complain(`语音上传失败：${e.message}`);
+      paint(btn, "idle");
+      return;
+    }
+
+    const reason = b.degraded?.[0]?.reason || "";
+    const text = stripPrompt(b.text);
+
+    if (b.degraded?.length) {
+      // ★ 服务端**没在听**（≠ 没听清）。原文进日志，人话念给耳朵。
+      log(`语音输入：服务端识别不可用 ${reason} ${b.degraded[0]?.detail || ""}`, "err");
+      degrade(reason);
+      return;
+    }
+    if (!text) {
+      complain("没听清，请再按住说一次");
+      paint(btn, "idle");
+      return;
+    }
+    serverFails = 0;
+    paint(btn, "idle");
+    handOver(text);
+  }
+
+  /** 服务端那条不通：永久性问题就换通道，暂时性失败只重试。 */
+  function degrade(reason) {
+    const why = ASR_REASONS[reason] || "不可用";
+    if (isPermanent(reason) && RecogCtor()) {
+      // ★ 换引擎要**说出来**，否则用户按住之后听到的反馈换了一套，他不知道为什么。
+      engine = "browser";
+      netWarned = false;                 // 新通道，那条解释该重新说一遍
+      btn.classList.add("warn");
+      paint(btn, "idle");
+      localNote(
+        `服务端语音识别${why}，已切到浏览器识别。请再按住说一次。`,
+        { priority: 2, hapticKind: "double" },
+      );
+      return;
+    }
+    serverFails += 1;
+    paint(btn, "idle");
+    // 第二次起加一句「可以打字」——一次失败不值得劝人放弃，一直失败就该劝了。
+    complain(serverFails >= 2
+      ? `语音识别${why}，请直接打字`
+      : `这次没认出来（${why}），请再按住说一次`);
+  }
+
+  const startServer = async (e) => {
+    e.preventDefault();
+    if (listening) return;
+    listening = true;
+    heard = false;
+    timedOut = false;
+    haptic("short");
+    paint(btn, "listening");
+
+    let s;
+    try {
+      s = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch (err) {
+      // 权限被拒 / 没有设备 / 被系统占用 —— 三件事的措辞不同，分开说。
+      const msg = err?.name === "NotAllowedError"
+        ? "麦克风没被允许，请允许麦克风（或用 HTTPS / localhost 打开）"
+        : err?.name === "NotFoundError" ? "没找到麦克风，请直接打字"
+        : `麦克风打不开（${err?.name || "未知原因"}），请直接打字`;
+      finish();
+      complain(msg);
+      return;
+    }
+
+    // ★ 第一次按住会弹权限框，用户往往在框还没点完就松手了。这时**不能**假装
+    //   在听：把流关掉，如实说「已就绪，请再来一次」—— 下一次就是秒开。
+    if (!listening) {
+      s.getTracks().forEach((t) => t.stop());
+      paint(btn, "idle");
+      localNote("麦克风已就绪，请再按住说一次。", { priority: 2 });
+      return;
+    }
+
+    stream = s;
+    chunks = [];
+    rec = new MediaRecorder(s);
+    rec.ondataavailable = (ev) => { if (ev.data && ev.data.size) chunks.push(ev.data); };
+    rec.onstop = () => { closeStream(); uploadRecording(); };
+    try {
+      rec.start();
+    } catch (err) {
+      closeStream();
+      finish();
+      complain("开始录音失败，请直接打字");
+      return;
+    }
+    // 按下去立刻出声说「在听了」：看不见屏幕的人只有这一条线索，而且它同时
+    // 确认了「麦克风被允许了」。（这句会被自己录进去 —— 见 stripPrompt。）
+    speak("请说目的地", { priority: 2, interrupt: true });
+    setTimeout(() => {
+      if (rec && rec.state === "recording") {
+        timedOut = true;
+        rec.stop();
+        listening = false;
+      }
+    }, MAX_RECORD_MS);
+  };
+
+  const stopServer = () => {
+    if (!rec) return;                        // 麦克风还没开（在等权限框）
+    if (rec.state !== "recording") return;
+    haptic("short");
+    paint(btn, "busy");
+    try {
+      rec.stop();                            // 停 → onstop → 上传
+    } catch {
+      closeStream();
+      paint(btn, "idle");
+    }
+  };
+
+  /** 指针被系统抢走（来电、手势返回）—— 丢掉这一段，别卡住也别上传。 */
+  const cancelServer = () => {
+    if (rec && rec.state === "recording") {
+      rec.onstop = null;                     // 不上传
+      try { rec.stop(); } catch { /* 已经停了 */ }
+    }
+    closeStream();
+  };
+
+  // ---- 引擎乙：浏览器（SpeechRecognition）----
+  let brec = null;
+
+  const startBrowser = (e) => {
     e.preventDefault();
     if (listening) return;
 
     let r;
     try {
-      r = new ctor();
+      r = new (RecogCtor())();
     } catch {
       complain(whyUnavailable());
       return;
     }
-    rec = r;
+    brec = r;
     heard = false;
     listening = true;
 
@@ -159,12 +461,11 @@ export function initVoiceInput() {
     r.maxAlternatives = 1;
 
     r.onresult = (ev) => {
-      const text = (ev.results?.[0]?.[0]?.transcript || "").trim();
+      const text = stripPrompt((ev.results?.[0]?.[0]?.transcript || "").trim());
       if (!text) return;         // 空结果交给 onend 去报「没听清」
       heard = true;
       paint(btn, "busy");
-      // 连上过了就把琥珀摘掉：降级标记要跟着**当前**状态走，不能变成常驻装饰。
-      btn.classList.remove("warn");
+      finish();
       handOver(text);
     };
 
@@ -200,8 +501,6 @@ export function initVoiceInput() {
 
     paint(btn, "listening");
     haptic("short");
-    // 按下去立刻出声说「在听了」：看不见屏幕的人只有这一条线索，
-    // 而且它同时确认了「麦克风被允许了」。
     speak("请说目的地", { priority: 2, interrupt: true });
     try {
       r.start();
@@ -211,37 +510,56 @@ export function initVoiceInput() {
     }
   };
 
-  const stop = () => {
-    if (!listening || !rec) return;
+  const stopBrowser = () => {
+    if (!listening || !brec) return;
     // 松手**立刻**给回执，不等识别结果 —— 弱网/慢机器下 onend 可能还要一会儿。
     haptic("short");
     paint(btn, "busy");
     try {
-      rec.stop();               // stop 会让引擎交出最终结果
+      brec.stop();               // stop 会让引擎交出最终结果
     } catch {
       finish();
     }
   };
 
+  // ---- 统一的按住 / 松开 ----
+
   btn.addEventListener("pointerdown", (e) => {
     // ★ 捕获指针：手指按住后滑出按钮、再松开，也要算「松开」。
     //   不捕获的话按钮会一直停在「正在听…」，而用户以为自己已经松手了。
     try { btn.setPointerCapture(e.pointerId); } catch { /* 老浏览器没有，忽略 */ }
-    start(e);
+    if (engine === "server") startServer(e);
+    else startBrowser(e);
   });
-  btn.addEventListener("pointerup", stop);
+
+  btn.addEventListener("pointerup", () => {
+    if (engine === "server") stopServer();
+    else stopBrowser();
+  });
+
   btn.addEventListener("pointercancel", () => {
-    // 系统把指针抢走了（来电、手势返回）——按「没听清」收尾，别卡住。
-    if (listening) { listening = false; paint(btn, "idle"); }
+    // 系统把指针抢走了（来电、手势返回）——收尾，别卡住。
+    if (engine === "server") cancelServer();
+    listening = false;
+    brec = null;
+    paint(btn, "idle");
   });
 
   // 键盘：没有「按住」的语义，退化成「按空格开始、松空格结束」——
   // 和外接键盘/开关设备用户的预期一致。
-  btn.addEventListener("keydown", (e) => {
+  const keyStart = (e) => {
     if (e.repeat) return;
-    if (e.key === " " || e.key === "Enter") { e.preventDefault(); start(e); }
-  });
-  btn.addEventListener("keyup", (e) => {
-    if (e.key === " " || e.key === "Enter") { e.preventDefault(); stop(); }
-  });
+    if (e.key === " " || e.key === "Enter") {
+      e.preventDefault();
+      if (engine === "server") startServer(e); else startBrowser(e);
+    }
+  };
+  const keyStop = (e) => {
+    if (e.key === " " || e.key === "Enter") {
+      e.preventDefault();
+      if (engine === "server") stopServer(); else stopBrowser();
+    }
+  };
+  btn.addEventListener("keydown", keyStart);
+  btn.addEventListener("keyup", keyStop);
 }

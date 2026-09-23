@@ -25,6 +25,18 @@ VLM_API_KEY: str = os.getenv("VLM_API_KEY", "")
 VLM_MODEL: str = os.getenv("VLM_MODEL", "")
 VLM_TIMEOUT_MS: int = int(os.getenv("VLM_TIMEOUT_MS", "8000"))
 
+# 语音识别（ASR / STT）—— 目的地那一格的服务端识别通道
+#   见 app/core/asr/。默认 `none` = 没有接识别（端侧会退回浏览器识别）；
+#   接真实识别用 `ASR=dashscope`。
+# ★ 地址与 key 默认**跟着 VLM 走**：同一把 dashscope key、同一个兼容端点就能用，
+#   不必为了语音再多配一份凭据（`.env.example` 里也只列 ASR 与 ASR_MODEL）。
+ASR: str = os.getenv("ASR", "none")
+ASR_MODEL: str = os.getenv("ASR_MODEL", "qwen3-asr-flash")
+ASR_BASE_URL: str = os.getenv("ASR_BASE_URL", "") or os.getenv("VLM_BASE_URL", "")
+ASR_API_KEY: str = os.getenv("ASR_API_KEY", "") or os.getenv("VLM_API_KEY", "")
+#: 比 VLM 宽一点：这里要先把音频传上去，弱网下多花的时间花在带宽上。
+ASR_TIMEOUT_MS: int = int(os.getenv("ASR_TIMEOUT_MS", "10000"))
+
 # 第三层：路线数据源（见 app/core/routers/）
 #   builtin = 内置假路网，不依赖网络；baidu = 百度地图步行路线规划
 # ★ 默认 builtin：演示与离线开发不该被网络拖垮。

@@ -13,6 +13,7 @@ from starlette.staticfiles import StaticFiles
 from app import config
 from app.api.envelope import Envelope, now_ms
 from app.api.hub import Hub
+from app.api.speech import make_transcribe
 from app.api.uploads import make_upload_frame
 from app.contracts import (
     PRIORITY_IMPORTANT,
@@ -103,8 +104,12 @@ async def health(request) -> JSONResponse:
     return JSONResponse({
         "ok": not degraded,
         "degraded": degraded,
+        # ★ asr 只出现在这份**信息性**清单里，不进上面的降级列表：语音识别不是
+        #   四层核心链路（目的地还能打字），缺了它会在按下的那一刻由端侧如实
+        #   说出来；挂进降级列表只会让「降级」这枚徽章长期亮着，把 VLM /
+        #   检测器 / 地图那三个真的降级淹掉。见 app/core/asr/__init__.py。
         "impls": {k: registry.names(k) for k in
-                  ("vlm", "detector", "layer", "framesource", "router")},
+                  ("vlm", "detector", "layer", "framesource", "router", "asr")},
         "config": {
             "VLM_PROVIDER": config.VLM_PROVIDER,
             "DETECTOR": config.DETECTOR,
@@ -174,6 +179,9 @@ def build_routes(hub: Hub, envelope: Envelope, layers: dict) -> list:
                                {"kind": "cancel"}), methods=["POST"]),
         Route("/v1/emergency/tick", make_tick(envelope, layers), methods=["POST"]),
         Route("/v1/frame", make_upload_frame(envelope, layers), methods=["POST"]),
+        # ★ 唯一一条不返回 Announcement 的业务入口 —— 识别文本是**数据**
+        #   （端侧填进目的地），不是要播出去的话。理由见 api/speech.py 头注释。
+        Route("/v1/asr", make_transcribe(), methods=["POST"]),
         Route("/v1/health", health, methods=["GET"]),
         # 调试台地图要的浏览器端 AK，从 .env 下发（不写进 web/ 里的文件）。
         Route("/v1/frontend-config", frontend_config, methods=["GET"]),

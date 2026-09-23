@@ -1,8 +1,9 @@
-/* 传输层 —— 与后端的三条通道，全在这里。
+/* 传输层 —— 与后端的通道，全在这里。
  *
  *   ① POST /v1/frame     上传一帧（multipart）—— 摄像头 / 视频抽帧 / 图片共用
  *   ② WS   /v1/stream    播报唯一入口（★ 页面只从这里拿播报，见 ui.js）
  *   ③ 其余 POST 路由      求助 / 取消 / 跌倒 / 导航 / 推进时钟
+ *   ④ POST /v1/asr       上传一段录音换识别文本（multipart）—— 见 postAsr
  *
  * ★ 播报为什么不直接拿 HTTP 响应渲染：端侧真实拿播报的通道只有 /v1/stream
  *   一条。调试台要是绕过它渲染，就等于「用一条生产不存在的路径验证契约」
@@ -69,6 +70,25 @@ export async function sendFrame(blob, source) {
     log(`${source} 上传异常：${e.message}`, "err");
     throw e;   // 交给调用方决定要不要提示用户（帧源卡片会显示状态）
   }
+}
+
+/** 上传一段录音，换回识别文本（`POST /v1/asr`）。
+ *
+ *  ★ 这是**唯一一条不返回播报**的业务请求：识别出的文本是**数据**（要填进
+ *    目的地那一格），不是要播出去的话 —— 见 `app/api/speech.py` 的头注释。
+ *    所以这里不像 postJson 那样回报闸门结果，而是把 `{text, impl, degraded}`
+ *    原样交回调用方，由它决定「念什么」。
+ *
+ *  ★ 失败也回 200：`degraded` 非空 = 服务端**没在听**（原因在 reason 里），
+ *    `text` 为空且 `degraded` 为空 = 听到了但没听清。两者的措辞完全不同，
+ *    所以不能把前者折成异常 —— 那会把「系统哑了」说成「你没说清」。
+ */
+export async function postAsr(form) {
+  const r = await fetch("/v1/asr", { method: "POST", body: form });
+  const b = await r.json();
+  // 4xx / 413 这些是**请求本身**的问题（缺字段、音频太大），回到调用方去说。
+  if (!r.ok) throw new Error(b.error || `HTTP ${r.status}`);
+  return b;
 }
 
 /** POST 一个 JSON 路由，并回报闸门结果。 */
