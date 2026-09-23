@@ -677,6 +677,10 @@ video { display: block; width: 100%; }
 }
 @keyframes listen-pulse { 50% { box-shadow: 0 0 0 7px rgba(91, 157, 255, .12); } }
 .phone .btn.hold.dead { color: var(--bad); border-color: rgba(251, 113, 133, .5); }
+/* 语音连不上（浏览器厂商的云服务不可达）—— 琥珀，不是红：它能恢复，
+   也不等于「这个浏览器没有语音 API」（那种才写 `.dead` 的「语音不可用」）。
+   颜色只是第三重编码：播报流里那条 localNote 把原因和「请直接打字」说全了。 */
+.phone .btn.hold.warn { color: var(--warn); border-color: rgba(251, 191, 36, .45); }
 
 /* 起点显示框（2026-09-23 改）：它既是「起点是从哪算的」的读数，也是那个
    重新定位的按钮 —— 两件事本来就是同一件。

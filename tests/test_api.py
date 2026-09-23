@@ -1066,6 +1066,39 @@ def test_voice_input_says_so_when_it_cannot_work(client):
     assert ".phone .btn.hold.listening" in css, "「正在听」要有自己的样子（配合震动与语音）"
 
 
+def test_voice_network_error_blames_the_right_culprit(client):
+    """★ 语音连不上时，**不能**让人以为「本项目的后端断了」。
+
+    起因（2026-09-23，实测）：Chromium 裸构建里不带语音服务，或到 Google 的
+    网络不通时，长按松开后 `error` 就是字符串 `network`。原来的兜底分支把它
+    原样念出来 ——「语音识别失败：network」：用户听到一个英文单词，而它**极
+    容易**被理解成「后端/网络断了」，于是转头去查一个根本没坏的东西。
+
+    浏览器厂商的云语音服务 ≠ 本项目的后端，两件事必须分开说（和
+    `/v1/health` 给不同降级原因分不同措辞是同一条规矩）。
+    """
+    js = client.get("/static/js/voice.js").text
+
+    assert 'why === "network"' in js, "network 要单列一条，不能落进兜底那句"
+    i = js.index("function complainNetwork(")
+    body = js[i:js.index("\n}\n", i)]
+    assert "浏览器厂商" in body, "要说清连不上的是**谁**"
+    assert "不是本项目的后端" in body, "必须明确排掉「本项目的后端断了」这个误会"
+    assert "打字" in body, "要给出绕过去的办法（打字）"
+    assert "localNote(" in body, \
+        "要进播报流（TTS / 读屏 / 可翻回来重看），不能只弹一个视觉提示"
+    assert '"dead"' not in body, \
+        "不许标成「语音不可用」—— 网络会回来，标死等于假红，用户从此不再试"
+
+    # 第二次起只说短句：同一件事念两遍整段解释，用户第三次就不听了
+    assert "netWarned" in js, "要记住已经解释过一次"
+    # 未知错误仍要兜底，不能因为加了分支就把兜底弄没了
+    assert "语音识别失败：" in js
+
+    css = client.get("/static/app.css").text
+    assert ".phone .btn.hold.warn" in css, "琥珀色标记要有样式（降级，不是不可用）"
+
+
 def test_speech_queue_never_lets_the_ear_fall_behind(client):
     """★ 端侧必须做**抢占**和**积压保护** —— 这是 design.md D11 划过来的活。
 

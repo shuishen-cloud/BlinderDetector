@@ -23,7 +23,7 @@
 
 import { $ } from "./dom.js";
 import { log } from "./log.js";
-import { toast, speak, haptic } from "./ui.js";
+import { toast, speak, haptic, localNote } from "./ui.js";
 // ★ 导航请求的**唯一**出口（打字那条路也走它）—— 见 nav.js 的头注释。
 import { submitRoute } from "./nav.js";
 
@@ -82,6 +82,40 @@ function complain(msg, kind = "err") {
   haptic("double");
 }
 
+/** 已经连不上过一次了 —— 之后只说短句，别再念一遍整段解释。 */
+let netWarned = false;
+
+/** 语音识别连不上**浏览器厂商的云服务**（`error === "network"`）。
+ *
+ *  ★ 起因（2026-09-23，实测）：Chromium 裸构建里不带语音服务，或到 Google
+ *    的网络不通时，长按松开后 `error` 就是字符串 `network`。原兜底分支把它
+ *    原样念出来 ——「语音识别失败：network」，用户听到一个英文单词，而且
+ *    **极容易理解成「本项目的后端/网络断了」**，转头去查一个根本没坏的东西。
+ *    浏览器厂商的云服务 ≠ 本项目的后端，这两件事必须分开说
+ *    （和 `/v1/health` 给不同降级原因分不同措辞是同一条规矩）。
+ *
+ *  ★ 走 localNote 而不是 speak：它同时喂 TTS、读屏（TTS 关时）和播报流 ——
+ *    这条解释要能**翻回来重看**，因为它说了「该改用打字」这件以后还有用的事。
+ *
+ *  ★ 不把按钮切成「语音不可用」（那是给「这个浏览器根本没有语音 API」留的）：
+ *    网络是会回来的，标成不可用等于**假红**，用户从此不再试一个其实能用的
+ *    功能。只标琥珀 + 说清怎么绕过去（打字），并且允许继续按住重试。
+ */
+function complainNetwork() {
+  const btn = $("talkBtn");
+  btn.classList.add("warn");
+  if (netWarned) {
+    localNote("语音还是连不上，请直接打字。", { priority: 2, hapticKind: "double" });
+    return;
+  }
+  netWarned = true;
+  log("语音输入：浏览器厂商的云语音服务连不上（error=network）", "err");
+  localNote(
+    "语音识别靠浏览器厂商的云服务，现在连不上 —— 不是本项目的后端。请直接打字。",
+    { priority: 2, hapticKind: "double" },
+  );
+}
+
 export function initVoiceInput() {
   const btn = $("talkBtn");
   const ctor = RecogCtor();
@@ -129,6 +163,8 @@ export function initVoiceInput() {
       if (!text) return;         // 空结果交给 onend 去报「没听清」
       heard = true;
       paint(btn, "busy");
+      // 连上过了就把琥珀摘掉：降级标记要跟着**当前**状态走，不能变成常驻装饰。
+      btn.classList.remove("warn");
       handOver(text);
     };
 
@@ -146,6 +182,11 @@ export function initVoiceInput() {
       } else if (why === "aborted") {
         // 我们自己 stop() 引起的，不算故障 —— 但这时通常也没等到结果
         complain("没听清，请再按住说一次");
+      } else if (why === "network") {
+        // ★ 单独一条：它是**浏览器厂商的云服务**连不上，不是本项目的后端。
+        complainNetwork();
+      } else if (why === "audio-capture") {
+        complain("没找到麦克风，请直接打字");
       } else complain(`语音识别失败：${why || "未知原因"}`);
     };
 
