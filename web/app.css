@@ -116,6 +116,16 @@ input:focus { border-color: rgba(91, 157, 255, .6); }
 input[type=number] { width: 66px; }
 input[type=text]  { flex: 1; min-width: 120px; }
 
+/* 启动自检的报错条（js/boot-check.js）—— 页面 JS 没跑起来时唯一会说话的东西。
+   ★ 用红色实底而不是"提示色"：它说明这一页**现在是坏的**，不是一条提醒。 */
+#bootErr {
+  margin: 0; padding: 12px 22px;
+  background: rgba(251, 113, 133, .16);
+  border-bottom: 1px solid var(--bad);
+  color: var(--fg); font-size: 13px; line-height: 1.5;
+  word-break: break-all;
+}
+
 /* ===================== 统计条 ===================== */
 
 .stats {
@@ -182,21 +192,46 @@ code {
 }
 video { display: block; width: 100%; }
 
-/* 顶部帧源条（2026-09-23）。
-   ★ 放在最上方是为了**演示** —— 看的人一眼看到「系统在看什么」。
-   ★ 视频**固定宽度**（132px）：盲人用户看不到它，所以它不该随屏幕自适应
-     去挤占播报流的空间；固定宽度就锁死了它的分量。 */
-.video-strip { display: flex; align-items: center; gap: 12px; }
-.strip-video { flex: 0 0 132px; width: 132px; }
-.strip-video video {
-  width: 132px; height: 88px; object-fit: cover;
-  border-radius: 8px; border: 1px solid var(--line); background: #000;
-}
-.strip-main { flex: 1; min-width: 0; }
-.strip-title { margin: 0 0 4px; font-size: 13.5px; font-weight: 600; }
-.strip-title small { margin-left: 6px; font-size: 11px; color: var(--dim); font-weight: 400; }
-.strip-main .mini-msg { margin: 0 0 6px; }
+/* 帧源模拟器（sender.html）里的视频 —— 单独一页，可以给大。
+   ★ 播报界面（index.html）**没有**视频了（2026-09-23 搬走）：
+     盲人用户看不到画面，那一页每一像素都该留给播报流和求助按钮。 */
+.video-wrap video { max-height: 320px; object-fit: contain; background: #000; }
+
 .btn.sm { padding: 5px 12px; font-size: 12px; }
+
+/* ===================== 帧 ↔ 播报 对照区 =====================
+   帧源页最要紧的一块：左边「刚发出去的这一帧」，右边「它被读成了什么」。
+   ★ 大图必须够清楚 —— 这一栏的用途就是拿肉眼把画面和播报对起来。 */
+.shots { display: flex; gap: 14px; align-items: flex-start; flex-wrap: wrap; }
+.shots-now { margin: 0; flex: 0 0 min(260px, 100%); }
+.shots-now img {
+  width: 100%; display: block; border-radius: 10px;
+  border: 1px solid var(--line); background: #000;
+}
+.shots-now .mini-msg { margin-top: 6px; }
+.shots-list {
+  flex: 1; min-width: 220px; max-height: 320px; overflow: auto;
+  display: flex; flex-direction: column; gap: 8px;
+  overscroll-behavior: contain;     /* 内滚到底别把整页也带着滚 */
+}
+.shot {
+  display: flex; gap: 10px; align-items: flex-start;
+  padding: 8px; border-radius: 10px;
+  border: 1px solid var(--line); background: var(--surface);
+}
+.shot.bad { border-color: var(--bad); }
+.shot > img { width: 96px; flex: 0 0 96px; border-radius: 6px; background: #000; }
+.shot-txt { min-width: 0; }
+.shot-head {
+  margin: 0 0 3px; font: 11px/1.5 var(--mono); color: var(--dim);
+  font-variant-numeric: tabular-nums;
+}
+.shot-said { margin: 2px 0 0; font-size: 12.5px; color: var(--fg-2); }
+/* 被闸门丢掉的也要显示出来，但一眼能和放行的区分开 */
+.shot-said.dropped { color: var(--dim); text-decoration: line-through; }
+
+/* 帧源模拟器页的外层容器 —— 它不是手机视图，不需要 560px 的窄栏。 */
+.sender { max-width: 1080px; margin: 0 auto; }
 
 /* ===================== 折叠区（2026-09-23） =====================
    ★ 用 `max-height` 折叠，**不要换成 `<details>`**：`<details>` 关闭时

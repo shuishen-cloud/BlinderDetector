@@ -32,6 +32,7 @@
 from __future__ import annotations
 
 from starlette.applications import Starlette
+from starlette.datastructures import MutableHeaders
 from starlette.middleware.cors import CORSMiddleware
 
 from app import config
@@ -47,6 +48,52 @@ from app.core.arbiter import Arbiter
 from app.paths import BASE_DIR, DATA_DIR, UPLOAD_DIR, WEB_DIR  # noqa: F401
 
 LAYER_NAMES = ("perception", "safety", "navigation", "emergency")
+
+#: 需要「回源确认」的前端路径。见 NoCacheFrontend 的说明。
+NO_CACHE_PREFIXES = ("/static/",)
+
+
+class NoCacheFrontend:
+    """给前端文件补上 `Cache-Control: no-cache` —— 即**每次回源确认**。
+
+    ★ 为什么必须有（2026-09-23，实测踩到的）：
+      `web/map.js` 从 classic 脚本改成了 ES module（末尾由
+      `window.LingmouMap = {...}` 变成 `export default`），而浏览器留着旧的那份
+      （同一个 URL，服务器又没发 Cache-Control，于是命中启发式缓存）。
+      后果**不是**「样式旧了」这种看得见的问题，而是入口直接抛：
+
+          Uncaught SyntaxError: The requested module '../map.js'
+          does not provide an export named 'default'
+
+      —— **整个模块图一行都不执行**，页面停在初始文案上（「连接中…」
+      「检查中」），看起来像网络慢。这正是本项目最不能接受的那类沉默失效。
+
+    ★ 代价几乎为零：`no-cache` 不是「不缓存」，是「用之前回源确认」。
+      响应本来就带 ETag / Last-Modified，没变就是 304，不重传正文。
+
+    ★ `/data/*` **有意不加**：素材旧了是**看得见**的（画面不对），
+      而模块旧了是沉默的 —— 只有后者值得付这份代价。
+    """
+
+    def __init__(self, app) -> None:
+        self.app = app
+
+    async def __call__(self, scope, receive, send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)   # WS 原样放过
+            return
+
+        path = scope["path"]
+        if path != "/" and not path.startswith(NO_CACHE_PREFIXES):
+            await self.app(scope, receive, send)
+            return
+
+        async def send_with_no_cache(message):
+            if message["type"] == "http.response.start":
+                MutableHeaders(scope=message)["Cache-Control"] = "no-cache"
+            await send(message)
+
+        await self.app(scope, receive, send_with_no_cache)
 
 
 def create_app() -> Starlette:
@@ -66,6 +113,7 @@ def create_app() -> Starlette:
     UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
     app = Starlette(routes=build_routes(hub, envelope, layers))
+    app.add_middleware(NoCacheFrontend)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=[o.strip() for o in config.CORS_ORIGINS.split(",") if o.strip()],

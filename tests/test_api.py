@@ -31,15 +31,18 @@ def arb(client):
     return client.app.state.arbiter
 
 
-def html_body(client) -> str:
+def html_body(client, path: str = "/") -> str:
     """页面 HTML，**剥掉注释**。
+
+    ★ `path` 默认 `/`；2026-09-23 起页面不止一页了（帧源模拟器在
+      `/static/sender.html`），所以允许指定。
 
     ★ 为什么必须剥：测试里常要「数某种标签出现了几次」，而注释里提到
       `<details>` / `<script>` 是常事（这些代码自己就反复提到）。不剥的话
       计数会被说明文字带偏 —— 这个坑在本文件里踩过两次（数 <details>、
       数 <script>），所以统一走这里。
     """
-    return re.sub(r"<!--.*?-->", "", client.get("/").text, flags=re.S)
+    return re.sub(r"<!--.*?-->", "", client.get(path).text, flags=re.S)
 
 
 # --------------------------------------------------------------------------
@@ -350,21 +353,21 @@ def test_test_pieces_are_shipped_but_hidden_by_default(client):
     元素一旦漏到 `#devPanel` 外面（比如以后有人挪错一行），手机视图上
     就会冒出调试按钮，而上面那条 `hidden` 照样是绿的。
 
-    ★★ 例外：`video` / `loopBtn` **有意放在手机视图里**（2026-09-22 调整）。
-       理由：手机视图默认没有任何帧源，于是第一层（感知）和第二层（安全）
-       永远不会触发 —— 打开页面看到的是一个播报流永远空着的「交付形态」。
-       视频对盲人用户没用，所以做成一张小卡片（`.video-mini`，84px 高），
-       作用是「喂帧」而不是给人看；频率旋钮仍是调试参数，留在面板里。
+    ★★ 例外（2026-09-23 改）：帧源相关的元素**不在这一页上了** ——
+       视频、发帧频率、单张图片、摄像头都搬到了 `sender.html`（同一端口下的
+       子页）。所以它们既不在这里断言「在面板里」、也不断言「在手机视图里」，
+       而是由 `test_frame_source_lives_on_its_own_page` 单独钉住。
 
-       这条改动**推翻了本用例原先的设计意图**（原作者用 `loopBtn` 当反例），
-       故在此显式记录，免得看起来像谁挪错了行。
+       （被取代的那条例外是 2026-09-22 立的：`video` / `loopBtn` 有意放在
+       手机视图里，理由是「没有帧源，第一二层永远不会触发」。这个风险还在，
+       只是换成了**给入口**的处理方式，见那条用例。）
     """
     html = client.get("/").text
 
     assert re.search(r'id="devPanel"[^>]*\shidden', html), "开发者面板必须默认隐藏"
 
     panel = html.index('id="devPanel"')
-    for el in ("perMs", "dropzone", "logTail", "stFrames"):
+    for el in ("logTail", "stDropped"):
         assert html.index(f'id="{el}"') > panel, f"{el} 是测试件，应该关在开发者面板里"
 
     # 手机视图得留着产品功能：播报开关、播报流、导航、一键求助
@@ -550,41 +553,100 @@ def test_homepage_includes_the_map_panel(client):
 
 
 
-def test_phone_view_has_a_frame_source(client):
-    """★ 手机视图必须自己能喂帧，否则第一、二层永远不会触发。
+def test_frame_source_lives_on_its_own_page(client):
+    """★ 帧源在**单独一页**（`/static/sender.html`），不在播报界面上。
 
-    没有帧源 = 播报流永远空着 —— 交付形态看起来就是个坏掉的应用。
-    视频做小（84px 一条）是因为盲人用户看不到画面，但它必须在。
+    起因（2026-09-23）：帧源属于**设备端** —— 真机上这一端是摄像头，不是
+    网页里的一段视频。而播报界面服务的是看不见屏幕的人：视频条哪怕只有
+    88px，也是从播报流和求助按钮那里拿走的。分开之后两边还能各走各的
+    （模拟器在笔记本上喂帧、播报界面在手机上看结果），这正是真机的拓扑。
+
+    ★ 这条改动**推翻了本用例原先的设计意图**。原用例要求手机视图自己
+      带帧源，理由是「没有帧源，第一二层永远不会触发 —— 打开页面看到的
+      是一个播报流永远空着的交付形态」。这个风险还在，只是换了处理方式：
+      播报界面必须**指向**帧源。所以下面同时钉住那条入口。
+
+    ★ 为什么是同一端口下的子页，而不是另开一个端口：跨端口会把
+      `demo.mp4` 变成跨域资源，`drawImage()` 之后 `canvas.toBlob()` 会因
+      画布被**污染**直接抛 SecurityError —— 表现是「按钮变成停止发帧，
+      一帧都没发出去」，正是最危险的那种沉默失效。
     """
-    html = client.get("/").text
-    phone = html.index('id="app"')
-    panel = html.index('id="devPanel"')
+    html = html_body(client)
 
-    for el in ("video", "loopBtn"):
-        pos = html.index(f'id="{el}"')
-        assert phone < pos < panel, f"{el} 应该在手机视图里（帧源），不该只在开发者面板"
-    assert "/data/demo.mp4" in html, "帧源要指向 demo.mp4"
+    # ① 播报界面自己**没有**帧源了
+    for el in ('id="video"', 'id="loopBtn"', 'id="frameMsg"',
+               'id="perMs"', 'id="safMs"', 'id="dropzone"'):
+        assert el not in html, f"播报界面不该再有帧源元素 {el}"
+
+    # ② 但它必须**指向**帧源 —— 否则单独打开这一页的人只会看到一个空播报流，
+    #    而「空播报流」和「应用坏了」长得一模一样
+    assert "/static/sender.html" in html, "播报界面必须给出帧源模拟器的入口"
+
+    # ③ 帧源那一页真的在，而且确实能喂帧
+    page = client.get("/static/sender.html").text
+    for el in ("video", "loopBtn", "frameMsg", "perMs", "safMs", "dropzone", "log"):
+        assert f'id="{el}"' in page, f"帧源页缺 {el}"
+    assert "/data/demo.mp4" in page, "帧源要指向 demo.mp4"
+    assert "/static/js/sender.js" in page, "帧源页要加载 js/sender.js"
+
+    # 帧源页也要有启动自检（script 标签的数量与顺序由
+    # test_scripts_are_boot_check_then_one_module 统一钉住）
+    sender = html_body(client, "/static/sender.html")
+    assert "/static/js/boot-check.js" in sender, "帧源页同样需要启动自检"
 
 
 def test_frame_source_has_visible_status(client):
-    """★ 帧源必须有可见状态，不能静默失效。
+    """★ 帧源必须有可见状态，不能静默失效。**测的是帧源那一页。**
 
-    `grabAndSend()` 在视频没就绪时会直接 return —— 按钮已经变成「停止发帧」，
-    页面看起来正常，实际一帧都没发出去，和后端坏了长得一模一样。
-    实测（worktree 里缺 demo.mp4）：`POST /v1/frame` 收到 0 次，
-    而请求日志在开发者面板里、默认看不见，所以手机视图必须自己说出来。
+    `sender.js::grabAndSend()` 在视频没就绪时会直接 return —— 按钮已经
+    变成「停止发帧」，页面看起来正常，实际一帧都没发出去，和后端坏了长得
+    一模一样。实测（worktree 里缺 demo.mp4）：`POST /v1/frame` 收到 0 次。
 
-    这条用例钉住「反馈元素存在且和帧源在同一张卡片里」——
-    以后谁把它删了，这里会红。
+    这条用例钉住三件事：反馈元素存在、它跟在视频之后、而且它确实被
+    真实的失败路径驱动（不是一句写死的文案）。
     """
-    html = client.get("/").text
-    phone, panel = html.index('id="app"'), html.index('id="devPanel"')
+    page = client.get("/static/sender.html").text
 
-    assert 'id="frameMsg"' in html, "帧源卡片必须有状态反馈元素"
-    pos = html.index('id="frameMsg"')
-    assert phone < pos < panel, "状态反馈要在手机视图的帧源卡片里，不能只在开发者面板"
-    # 和帧源在同一张卡片内（在 video 之后、卡片结束之前）
-    assert html.index('id="video"') < pos, "状态行应跟在视频之后"
+    assert 'id="frameMsg"' in page, "帧源页必须有状态反馈元素"
+    assert page.index('id="video"') < page.index('id="frameMsg"'), "状态行应跟在视频之后"
+    assert 'id="loopBtn"' in page, "帧源页必须有发帧开关"
+
+    js = client.get("/static/js/sender.js").text
+    assert "setFrameMsg" in js, "状态行要由 JS 驱动"
+    for reason in ("视频未就绪", "视频加载失败", "上传失败"):
+        assert reason in js, f"这条失败路径必须写进状态行：{reason}"
+
+
+def test_frame_source_shows_the_frame_it_sent(client):
+    """★ 帧源页必须能显示**刚发出去的那一帧**，供与播报逐条对照。
+
+    动机（2026-09-23）：帧源搬到另一页之后，「主页面那条播报是哪儿来的」
+    就没人答得上来了。这一栏把三种故障分开 ——
+      没有条目            → 帧没发出去（看状态行）
+      有条目但没有文案    → 模型没看出东西
+      文案标着「闸门丢弃」→ 读对了，但被闸门当重复/过期吃掉了
+
+    ★ 缩略图必须在上传**之前**从 canvas 取：video 一直在往前播，等上传
+      回来再取就变成「后面某一拍」的画面，对照会直接错位。
+    """
+    page = client.get("/static/sender.html").text
+    assert 'id="lastShot"' in page, "要有「刚发出去的那一帧」大图"
+    assert 'id="frameCards"' in page, "要有帧历史列表"
+
+    js = client.get("/static/js/sender.js").text
+    # ★ 只在**函数体内**比先后：文件头注释里就提到了 canvas.toBlob（那段在讲
+    #   跨端口会造成画布污染），拿全文 index 比会被注释带偏 —— 本文件在
+    #   「数标签」上已经栽过两次，这里同理。
+    body = js[js.index("async function grabAndSend"):]
+    body = body[:body.index("\n}\n")]
+    assert body.index("thumbURL()") < body.index("canvas.toBlob"), \
+        "缩略图要在上传前取，否则对照会错位"
+
+    assert "闸门丢弃" in js, "被闸门丢掉的那几条也要显示出来"
+    assert "SHOTS_MAX" in js, "历史要有上限，不然这一页会变成流水账"
+
+    net = client.get("/static/js/net.js").text
+    assert "said:" in net and "sentIds" in net, "sendFrame 要逐条回传放行情况"
 
 
 def test_emergency_is_dismissible_by_tapping_anywhere(client):
@@ -625,25 +687,24 @@ def test_phone_feed_has_fixed_height_and_scrolls(client):
     assert "overscroll-behavior: contain" in block, "内滚到底不该把整页也带着滚"
 
 
-def test_video_strip_has_fixed_width(client):
-    """帧源条：宽度**固定**，且必须在手机视图里。
+def test_sender_page_keeps_the_video_bounded(client):
+    """帧源那一页的视频要**限高**。
 
-    ★ 「放最上方」这条要求已被取代（2026-09-23）：导航与播报改为占据
-      顶部，帧源条随之下移。所以位置断言改成「在手机视图内」而不是
-      「在最上方」—— 它仍不该被收进开发者面板（那样手机视图就没有帧源，
-      第一二层永远不会触发，见 test_phone_view_has_a_frame_source）。
+    ★ 为什么：这一页唯一能看出「一帧都没发出去」的地方是右侧的上传日志。
+      视频不限高的话，一屏全是画面，日志被顶到屏幕外 —— 于是「按钮变成了
+      停止发帧」这个假象又回来了。所以限高是这条链路的一部分，不是审美。
 
-    宽度仍然必须固定：盲人用户看不到画面，它不该随屏幕自适应挤占播报流。
+    ★ 顺带钉住：原先手机视图里那条固定 132px 的帧源条连同样式一起搬走，
+      别留下一条没人用的 `.video-strip`。它靠 `.phone` 的窄栏才不出格，
+      留在样式表里下次很容易被谁「顺手」用回播报界面上。
     """
-    html = client.get("/").text
-    strip = html.index('class="card video-strip"')
-    assert html.index('id="app"') < strip < html.index('id="devPanel"'), \
-        "帧源条要在手机视图里"
-
     css = client.get("/static/app.css").text
-    blk = css[css.index(".strip-video {"):]
+
+    blk = css[css.index(".video-wrap video {"):]
     blk = blk[:blk.index("}")]
-    assert "132px" in blk, "视频要固定宽度，不能自适应"
+    assert "max-height" in blk, "视频要限高，别把上传日志挤出屏幕"
+
+    assert ".video-strip" not in css, "播报界面的帧源条已搬走，样式也不该留着"
 
 
 def test_map_fold_does_not_use_details_tag(client):
@@ -702,31 +763,42 @@ def test_sos_buttons_live_in_the_top_dock(client):
 # 前端模块化（2026-09-23）—— 下面两条是这次重构真正的安全网
 # --------------------------------------------------------------------------
 
-JS_FILES = ["/static/js/dom.js", "/static/js/state.js", "/static/js/log.js",
-            "/static/js/net.js", "/static/js/ui.js", "/static/js/dev.js",
-            "/static/js/main.js", "/static/map.js"]
+#: 每一页 → 它加载的脚本。★ 按页分组，别混成一个列表 ——
+#: 帧源模拟器是另一页，拿 `sender.js` 去 `/` 上找 `#video` 会误报，
+#: 而放它过等于把这条安全网拆掉。
+PAGE_JS = {
+    "/": ["/static/js/dom.js", "/static/js/state.js", "/static/js/log.js",
+          "/static/js/net.js", "/static/js/ui.js", "/static/js/dev.js",
+          "/static/js/main.js", "/static/map.js"],
+    "/static/sender.html": ["/static/js/sender.js", "/static/js/dom.js",
+                            "/static/js/state.js", "/static/js/log.js",
+                            "/static/js/net.js"],
+}
 
 
 def test_every_id_the_js_reaches_for_exists_in_the_html(client):
-    """★ JS 引用的每个 id 都必须在页面上存在。
+    """★ JS 引用的每个 id 都必须在**它自己那一页**上存在。
 
     这是前端拆模块之后最要紧的一条：所有模块一律按 id 取 DOM，重构时把
     一个 `$("xxx")` 搬到了别的文件、而那个元素根本不在页面上 ——
     **只有真去点那个按钮才会报错**，而单元测试看不见。
     反向同理：元素被删了而 JS 还在取，也是这里先报。
 
+    ★ 2026-09-23：页面从一页变成了两页，所以检查也按页分开（见 PAGE_JS）。
+      本次搬帧源就是这么被抓住的：`sender.js` 取的那批 id 全都不在 `/` 上。
+
     静态检查替代不了浏览器，但这一类断裂它能全部拦住。
     """
-    ids = set(re.findall(r'id="([^"]+)"', client.get("/").text))
-
     missing = {}
-    for path in JS_FILES:
-        src = client.get(path).text
-        refs = set(re.findall(r'\$\("([^"]+)"\)', src))
-        refs |= set(re.findall(r'getElementById\("([^"]+)"\)', src))
-        gap = sorted(r for r in refs if r not in ids)
-        if gap:
-            missing[path] = gap
+    for page, files in PAGE_JS.items():
+        ids = set(re.findall(r'id="([^"]+)"', client.get(page).text))
+        for path in files:
+            src = client.get(path).text
+            refs = set(re.findall(r'\$\("([^"]+)"\)', src))
+            refs |= set(re.findall(r'getElementById\("([^"]+)"\)', src))
+            gap = sorted(r for r in refs if r not in ids)
+            if gap:
+                missing[f"{page} ← {path}"] = gap
 
     assert not missing, f"JS 引用了页面上不存在的 id：{missing}"
 
@@ -753,7 +825,8 @@ def _resolve_module(base_dir: str, spec: str) -> str:
 def test_every_module_import_resolves(client):
     """模块 import 的路径都要真的取得到 —— 拼错在浏览器里是**静默失败**：
     整页 JS 不执行，而控制台之外看不出任何异常。"""
-    for page in ("/static/js/main.js", "/static/js/dev.js", "/static/map.js"):
+    for page in ("/static/js/main.js", "/static/js/dev.js", "/static/map.js",
+                 "/static/js/sender.js"):
         base_dir = str(PurePosixPath(page).parent)
         for m in re.findall(r'from "(\.{1,2}/[^"]+)"', client.get(page).text):
             url = _resolve_module(base_dir, m)
@@ -768,17 +841,79 @@ def test_module_resolver_collapses_dotdot():
     assert _resolve_module("/static/js", "../../x.js") == "/x.js"
 
 
-def test_only_one_script_tag_and_it_is_a_module(client):
-    """★ 页面只该有一个 <script>，且必须是 ES module。
+def test_scripts_are_boot_check_then_one_module(client):
+    """★ 每页只该有两个 <script>：**启动自检（classic）+ 入口（module）**。
 
     拆模块之前是两个普通脚本，靠「谁写在前面」定顺序；现在顺序交给模块图，
-    多一个普通 <script> 或漏掉 type="module" 都会让 import 语法直接报错。
+    漏掉 `type="module"` 会让 import 语法直接报错。
+
+    ★ 唯一允许的 classic 脚本是启动自检（2026-09-23 加）。它**必须**排在
+      入口之前，理由见 `js/boot-check.js` 的头注释：入口模块图的失败会阻止
+      module 执行 —— 「自己报不了自己」，所以只能由一段 classic 脚本兜底。
+      实测过它的必要性：主页面在某个浏览器里整条模块链没执行，页面停在
+      「连接中…」「检查中」，除控制台外**没有任何提示**。
     """
-    html = html_body(client)          # 剥注释，否则注释里提到的 <script> 会被算进来
-    tags = re.findall(r"<script[^>]*>", html)
-    assert len(tags) == 1, f"只该有一个 script 标签，实际 {tags}"
-    assert 'type="module"' in tags[0], "必须是 module"
-    assert "/static/js/main.js" in tags[0], "入口应是 js/main.js"
+    for page, entry in (("/", "/static/js/main.js"),
+                        ("/static/sender.html", "/static/js/sender.js")):
+        html = html_body(client, page)     # 剥注释，否则注释里的 <script> 会被算进来
+        tags = re.findall(r"<script[^>]*>", html)
+        assert len(tags) == 2, f"{page} 只该有两个 script 标签（自检 + 入口），实际 {tags}"
+        assert 'type="module"' not in tags[0], f"{page} 第一个必须是 classic 的启动自检"
+        assert "/static/js/boot-check.js" in tags[0], f"{page} 自检应指向 boot-check.js"
+        assert 'type="module"' in tags[1], f"{page} 第二个必须是 module"
+        assert entry in tags[1], f"{page} 入口应是 {entry}"
+
+    # ---- 自检本身 ----
+    js = client.get("/static/js/boot-check.js").text
+    # ★ 看行首的 import 语句，不看全文出现：注释里也会提到 import（本文件刚栽过
+    #   一次同类跟头 —— 拿全文 index 比先后被注释带偏）
+    assert not re.search(r"^\s*import\s", js, re.M), \
+        "自检必须是 classic 脚本，不能有 import 语句"
+    assert 'addEventListener("error"' in js and "unhandledrejection" in js, \
+        "自检要同时接住脚本错误与未处理的 Promise 拒绝"
+    assert "lm:booted" in js, "判据应是「入口报到」，不是「有没有报错」"
+    assert "REDACTED = \"Script error.\"" in js, \
+        "跨域脚本的报错（百度 SDK）必须忽略 —— 误报会让人学会无视这条横幅"
+
+    # ---- 报到信号的另一端：**每个入口**都得派发 ----
+    # ★ 漏掉一个的后果实测过：帧源页会挂一条「入口没有跑起来」的假横幅，
+    #   而它其实好端端地在发帧 —— 误报比不报更糟。
+    for entry, setup in (("/static/js/main.js", "initUI()"),
+                         ("/static/js/sender.js", "initSender()")):
+        js = client.get(entry).text
+        assert 'new Event("lm:booted")' in js, f"{entry} 必须派发报到信号"
+        # ★ 报到要放在**最后**：放最前面的话「装配抛异常」会漏过去
+        assert js.index(setup) < js.index('new Event("lm:booted")'), \
+            f"{entry} 的报到要在装配之后"
+
+
+def test_frontend_files_are_never_cached_without_revalidation(client):
+    """★ 前端文件必须带 `Cache-Control: no-cache`（回源确认，不是不缓存）。
+
+    起因（2026-09-23，实测踩到的）：`web/map.js` 从 classic 脚本改成了 ES
+    module（末尾由 `window.LingmouMap = {...}` 变成 `export default`），
+    而浏览器留着旧的那份 —— 同一个 URL、服务器又没发 Cache-Control，
+    于是命中启发式缓存。后果**不是**「样式旧了」这种看得见的问题，而是入口
+    直接抛：
+
+        Uncaught SyntaxError: The requested module '../map.js'
+        does not provide an export named 'default'
+
+    整个模块图一行都不执行，页面停在初始文案上（「连接中…」「检查中」），
+    看起来像网络慢。这正是本项目最不能接受的那类沉默失效。
+
+    ★ `/data/*` **有意不在此列**：素材旧了是看得见的（画面不对），
+      而模块旧了是沉默的 —— 只有后者值得付「每次回源确认」这份代价。
+    """
+    for path in ("/", "/static/app.css", "/static/js/main.js",
+                 "/static/map.js", "/static/js/boot-check.js"):
+        r = client.get(path)
+        assert r.headers.get("cache-control") == "no-cache", f"{path} 缺 no-cache"
+        # 没有 ETag 的话 no-cache 就退化成每次都重传正文，代价不成比例
+        assert r.headers.get("etag"), f"{path} 要带 ETag"
+
+    # 素材不强制回源（改了是看得见的）
+    assert client.get("/data/demo.mp4").headers.get("cache-control") is None
 
 
 def test_only_emergency_announcements_take_over_the_screen(client):
@@ -826,8 +961,12 @@ def test_html_ids_are_unique(client):
     导航卡标题和折叠区各有一个 —— map.js 只更新得到前一个。**已有的
     「JS 引用的 id 是否存在」那条查不出来**，因为两个都存在。
     """
-    ids = re.findall(r'id="([^"]+)"', html_body(client))
-    dup = {k: v for k, v in Counter(ids).items() if v > 1}
+    dup = {}
+    for page in ("/", "/static/sender.html"):
+        ids = re.findall(r'id="([^"]+)"', html_body(client, page))
+        bad = {k: v for k, v in Counter(ids).items() if v > 1}
+        if bad:
+            dup[page] = bad
     assert not dup, f"id 重复：{dup}"
 
 
@@ -861,8 +1000,11 @@ def test_nav_and_feed_are_the_first_two_cards(client):
     两者的可见性是「一直显示」的前提：
       · 播报 —— 陪同者要一直看到「系统正在说什么」；
       · 导航 —— 要一直看到「正往哪走」。
-    其余卡片（帧源、意外统计）是次要的，排在后面可以滚。
+    其余卡片（意外统计）是次要的，排在后面可以滚。
     播报压到两条高度，是为了让这两张卡不靠滚动就能同屏看到。
+
+    ★ 2026-09-23：原来的第三张卡（帧源条）已搬到 `sender.html` ——
+      手机视图现在只剩这三张，正好一眼看完。
     """
     body = html_body(client)
     i = body.index('class="screen"')
@@ -870,11 +1012,10 @@ def test_nav_and_feed_are_the_first_two_cards(client):
 
     nav = seg.index("导航")
     feed = seg.index("播报")
-    video = seg.index("video-strip")
     inc = seg.index("意外统计")
 
-    assert nav < feed < video and nav < feed < inc, \
-        "导航与播报必须是前两张卡片"
+    assert nav < feed < inc, "导航与播报必须是前两张卡片"
+    assert "video" not in seg, "帧源已经搬到 sender.html，不该再出现在手机视图里"
 
     css = client.get("/static/app.css").text
     blk = css[css.index(".phone .feed"):]

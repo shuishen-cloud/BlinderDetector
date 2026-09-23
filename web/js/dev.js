@@ -1,17 +1,21 @@
 /* 调试件逻辑 —— 契约验证的那一半。
  *
- * 与 ui.js 的分界：这里的东西**交付形态里不该有**（帧源、请求日志、健康明细、
- * 其余路由按钮、发帧频率旋钮、地图折叠）。它们在 index.html 里都在
- * `#devPanel`（默认 hidden）内，JS 跟着分。
+ * 与 ui.js 的分界：这里的东西**交付形态里不该有**（请求日志、健康明细、
+ * 其余路由按钮、地图折叠）。它们在 index.html 里都在 `#devPanel`
+ * （默认 hidden）内，JS 跟着分。
+ *
+ * ★ 帧源**不在这里**（2026-09-23 搬走）：视频抽帧、发帧频率、单张图片、
+ *   摄像头搬到了 `js/sender.js` + `sender.html` —— 那是**设备端**的东西，
+ *   而且它得在页面加载后就一直跑，跟「默认隐藏的调试件」是两种生命期。
+ *   两边共用同一个上传出口 `net.js::sendFrame()`。
  *
  * ★ 隐藏 ≠ 删除：这些元素仍在 DOM 里，各模块一律按 id 取用，
  *   真删掉会当场报错。所以是 `hidden`，翻出来就能继续验证契约。
  */
 
 import { $, readGeo } from "./dom.js";
-import { state, stats } from "./state.js";
 import { log } from "./log.js";
-import { sendFrame, postJson, fetchHealth } from "./net.js";
+import { postJson, fetchHealth } from "./net.js";
 import { toast, speak, haptic } from "./ui.js";
 import LingmouMap from "../map.js";
 
@@ -35,93 +39,6 @@ export function devFromUrl() {
   if (q === "1") return true;
   if (q === "0") return false;
   try { return localStorage.getItem(DEV_KEY) === "1"; } catch { return false; }
-}
-
-// =====================================================================
-// 帧源 ① 视频抽帧 —— 播报的内容来源
-// =====================================================================
-
-const video = $("video");
-const canvas = document.createElement("canvas");
-
-/* 帧源的状态反馈。
- * ★ 为什么必须有：`grabAndSend()` 在视频没就绪时会**静默 return** ——
- *   按钮已经变成「停止发帧」，页面看起来一切正常，实际一帧都没发出去。
- *   这跟「后端坏了」长得一模一样。实测（worktree 里缺 demo.mp4）：
- *   `POST /v1/frame` 收到 **0 次**，而日志里只有几条 /data 404。
- *   最常见的原因就是素材没生成 —— 它是 gitignore 的产物。
- */
-export function setFrameMsg(text, warn = false) {
-  const el = $("frameMsg");
-  if (!el || el.textContent === text) return;  // 去重：别每拍刷一次 DOM
-  el.textContent = text;
-  el.classList.toggle("warn", warn);
-}
-
-function onVideoBroken() {
-  state.frameWarn = "视频加载失败 —— 先跑 python scripts/make_test_video.py 生成 data/demo.mp4";
-  setFrameMsg(state.frameWarn, true);
-}
-
-async function grabAndSend(source) {
-  if (!video.videoWidth || video.paused) {
-    if (!state.frameWarn) {        // 只报一次，别每拍刷屏
-      state.frameWarn = "视频未就绪，这一拍跳过";
-      setFrameMsg(state.frameWarn, true);
-    }
-    return;
-  }
-  state.frameWarn = "";            // 恢复了，警告撤掉
-  canvas.width = video.videoWidth;
-  canvas.height = video.videoHeight;
-  canvas.getContext("2d").drawImage(video, 0, 0);
-  const blob = await new Promise((res) => canvas.toBlob(res, "image/jpeg", 0.8));
-  if (!blob) return;
-  await sendFrame(blob, source);
-  if (state.loopTimer) setFrameMsg(`已发 ${stats.frames} 帧`);
-}
-
-function toggleLoop() {
-  const btn = $("loopBtn");
-  if (state.loopTimer) {
-    clearInterval(state.loopTimer.per);
-    clearInterval(state.loopTimer.saf);
-    state.loopTimer = null;
-    btn.textContent = "开始发帧";
-    btn.classList.remove("running");
-    setFrameMsg(state.frameWarn || "未开始", !!state.frameWarn);
-    log("已停止发帧", "dim");
-    return;
-  }
-
-  state.frameWarn = "";
-  video.play().catch((e) => {
-    state.frameWarn = `视频无法播放（${e.name}）`;
-    setFrameMsg(state.frameWarn, true);
-  });
-  setFrameMsg(`已发 ${stats.frames} 帧`);
-  const per = Math.max(200, +$("perMs").value || 2000);
-  const saf = Math.max(100, +$("safMs").value || 1500);
-
-  // 两条流水线各自独立定时 —— 频率不同是设计要求，不是一个循环发两次
-  state.loopTimer = {
-    per: setInterval(() => grabAndSend("perception"), per),
-    saf: setInterval(() => grabAndSend("safety"), saf),
-  };
-  btn.textContent = "停止发帧";
-  btn.classList.add("running");
-  log(`开始发帧：感知 ${per}ms / 安全 ${saf}ms`, "ok");
-}
-
-// =====================================================================
-// 帧源 ③ 单张 / 多张图片
-// =====================================================================
-
-function sendFiles(files) {
-  const imgs = [...files].filter((f) => f.type.startsWith("image/"));
-  if (!imgs.length) return;
-  imgs.forEach((f) => sendFrame(f, "perception"));  // 图片当场景描述喂第一层
-  log(`拖入 ${imgs.length} 张图片 → 感知层`, "ok");
 }
 
 // =====================================================================
@@ -268,20 +185,6 @@ export function initDev() {
   $("devBtn").onclick = () => setDev($("devPanel").hidden);
   $("devClose").onclick = () => setDev(false);
 
-  $("loopBtn").onclick = toggleLoop;
-
-  $("file").onchange = (e) => sendFiles(e.target.files);
-
-  const zone = $("dropzone");
-  document.addEventListener("dragover", (e) => e.preventDefault());
-  document.addEventListener("dragenter", () => zone.classList.add("over"));
-  document.addEventListener("dragleave", () => zone.classList.remove("over"));
-  document.addEventListener("drop", (e) => {
-    e.preventDefault();
-    zone.classList.remove("over");
-    if (e.dataTransfer?.files?.length) sendFiles(e.dataTransfer.files);
-  });
-
   // 折叠区（地图等）。★ 用 max-height 而不是 <details>：<details> 关闭时
   // 内容 display:none，地图容器没有布局高度，百度 GL 会静默不渲染。
   document.querySelectorAll("[data-fold]").forEach((head) => {
@@ -294,12 +197,6 @@ export function initDev() {
       if (open) LingmouMap.refresh();
     };
   });
-
-  // 404 时 <video> 的 error 事件在有些浏览器不冒出来，补一次显式探测
-  video.addEventListener("error", onVideoBroken);
-  fetch(video.getAttribute("src"), { method: "HEAD" })
-    .then((r) => { if (!r.ok) onVideoBroken(); })
-    .catch(() => {});
 
   bindRouteButtons();
   bindGeoButton();

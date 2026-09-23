@@ -1,12 +1,17 @@
 /* 入口 —— 只做装配，不放业务逻辑。
  *
- * 四个模块按 index.html 已经划好的界线分工：
+ * 各模块按 index.html 已经划好的界线分工：
  *
  *   ui.js    产品界面（播报流 / 紧急全屏 / 提示 / 语音 / 筛选暂停清空）
- *   dev.js   调试件（面板开关 / 帧源 / 单图 / 其余路由 / 健康 / 统计）
+ *   dev.js   调试件（面板开关 / 其余路由 / 健康 / 统计）
+ *            ★ 帧源不在这一页：它在 js/sender.js + sender.html（另一页）
  *   net.js   传输（POST /v1/frame、WS /v1/stream、其余 POST 路由）
  *   state.js 共享状态（单一真源）
  *   map.js   路线可视化（★ 唯一依赖第三方运行时：百度 JSAPI GL）
+ *
+ * ★ 末尾派发 `lm:booted`：那是启动自检（boot-check.js）的**报到信号** ——
+ *   它判「页面起来没有」靠的是这个事件，不是「有没有报错」（第三方脚本
+ *   天天在抛，跨域的还会被抹成 `Script error.`）。见 boot-check.js 头注释。
  *
  * ★ map.js 也从这里 import —— 加载顺序交给模块图，不再依赖 <script> 的
  *   先后。它改成 export default 之后，`window.LingmouMap` 那个约定就去掉了：
@@ -55,3 +60,7 @@ connectStream({
     LingmouMap.onAnnouncement(a);
   },
 });
+
+// ★ 报到：走到这一行说明整条模块链都执行了、装配也没抛。
+//   放在**最后**而不是最前面 —— 放前面的话「init 里抛异常」这类失败会漏过去。
+document.dispatchEvent(new Event("lm:booted"));

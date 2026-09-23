@@ -20,10 +20,18 @@ export function gateSummary(b) {
   const sentIds = new Set(b.arbiter?.sent ?? b.sent ?? []);
   const produced = b.announcements ?? [];
   const passed = produced.filter((a) => sentIds.has(a.id)).length;
-  return { produced: produced.length, passed, dropped: produced.length - passed };
+  // ★ sentIds 也一并交出去：调用方要**逐条**标出「这条放行了没有」。
+  //   让它自己再解析一遍 `arbiter.sent`，等于把上面这行约定复制成两份。
+  return { produced: produced.length, passed, dropped: produced.length - passed, sentIds };
 }
 
-/** 上传一帧。三个帧源（视频抽帧 / 摄像头 / 单张图片）共用这一个出口。 */
+/** 上传一帧。三个帧源（视频抽帧 / 摄像头 / 单张图片）共用这一个出口。
+ *
+ * ★ 返回值**只给调试用**：帧源模拟器拿它把「这一帧被读成了什么」摆在
+ *   同一张卡片上，好和播报界面上的播报逐条对照。
+ *   它**不是**第二条渲染路径 —— 播报界面上的每一条仍然只从
+ *   `WS /v1/stream` 来（见文件头那条约定），否则 WS 断了你也看不出来。
+ */
 export async function sendFrame(blob, source) {
   const index = state.frameSeq++;
   const fd = new FormData();
@@ -36,13 +44,27 @@ export async function sendFrame(blob, source) {
   try {
     const r = await fetch("/v1/frame", { method: "POST", body: fd });
     const b = await r.json();
-    if (!r.ok) { log(`${source} 上传失败 ${r.status}：${b.error || ""}`, "err"); return; }
+    if (!r.ok) {
+      const error = b.error || `HTTP ${r.status}`;
+      log(`${source} 上传失败 ${r.status}：${b.error || ""}`, "err");
+      return { index, source, ok: false, error, produced: 0, passed: 0, dropped: 0, said: [] };
+    }
 
     bump("frames");
     const g = gateSummary(b);
     bump("dropped", g.dropped);
     log(`${source} idx=${index} 产出 ${g.produced} 条，放行 ${g.passed} 条` +
         (g.dropped ? `，丢弃 ${g.dropped} 条（重复/过期）` : ""), g.dropped ? "dim" : "ok");
+    return {
+      index, source, ok: true,
+      produced: g.produced, passed: g.passed, dropped: g.dropped,
+      // 逐条带上「放行没有」—— 被闸门丢掉的那几条也要显示出来，
+      // 否则「这一帧明明看到台阶却没播报」会查不出是闸门吃的还是模型没看出来。
+      said: (b.announcements ?? []).map((a) => ({
+        id: a.id, source: a.source, priority: a.priority, text: a.text,
+        passed: g.sentIds.has(a.id),
+      })),
+    };
   } catch (e) {
     log(`${source} 上传异常：${e.message}`, "err");
     throw e;   // 交给调用方决定要不要提示用户（帧源卡片会显示状态）

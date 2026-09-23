@@ -26,7 +26,8 @@
     app.css        样式（含深色主题的全部取值）
     js/main.js     入口装配
     js/ui.js       ★ 产品界面：播报流 / 紧急全屏 / 提示 / 语音 / 筛选暂停清空
-    js/dev.js      ★ 调试件：面板开关 / 帧源 / 单图 / 其余路由 / 健康
+    js/dev.js      ★ 调试件：面板开关 / 其余路由 / 健康 / 统计
+    js/sender.js   ★ 帧源模拟器（在**另一页** sender.html 里）：抓帧并上传
     js/net.js      传输：POST /v1/frame、WS /v1/stream、其余 POST 路由
     js/state.js    共享状态（单一真源）
     js/log.js      请求日志（产品逻辑也要记，故独立成文件）
@@ -44,9 +45,14 @@
     所以这里必须发**递增**的序号 —— 固定 index 会让闸门把后续全部当
     重复丢掉，页面上只会看到一条。
 
-  帧源：手机视图顶部有一条固定宽度的视频条（要用，播报才有内容）；
-  开发者面板里另有摄像头占位与单张图片。它们共用同一个上传接口
-  POST /v1/frame（multipart）。
+  ★ 帧源**不在这里**（2026-09-23 搬走）：视频抽帧 / 发帧频率 / 单张图片 /
+    摄像头，全部在 `sender.html` + `js/sender.js` —— 同一端口下的另一页。
+    理由是帧源属于**设备端**（真机上是摄像头），而这一页服务的是
+    看不见屏幕的人；分开之后两边还能各走各的（模拟器在笔记本上喂帧、
+    这页在手机上看结果）。两边共用同一个上传出口 POST /v1/frame（multipart）。
+
+    ★ 代价要说清楚：这一页自己**不喂帧**了，所以单独打开它时播报流必然是空的。
+      那不是页面坏了 —— 开发者面板里那张「帧源」卡有入口和说明。
 -->
 </head>
 <body>
@@ -189,25 +195,6 @@
       </div>
     </section>
 
-<!-- ---------------- 帧源（顶部固定宽度） ---------------- -->
-    <!-- ★ 放最上方是为了**演示**：让看的人一眼看到「系统在看什么」。
-         宽度固定（132px），所以不会随屏幕自适应去挤占播报流的空间 ——
-         盲人用户看不到它，它不该是主界面的一部分。
-         ★ #video / #loopBtn 的 id 不能改：app.js 一律按 id 取 DOM。 -->
-    <section class="card video-strip">
-      <div class="strip-video">
-        <video id="video" src="/data/demo.mp4" muted loop playsinline></video>
-      </div>
-      <div class="strip-main">
-        <p class="strip-title">帧源<small>demo.mp4</small></p>
-        <!-- ★ 这行是必须的，不是装饰：视频没就绪时 grabAndSend() 会静默
-             return，按钮却已变成「停止发帧」—— 看起来和后端坏了没区别。
-             素材缺失（demo.mp4 是 gitignore 的产物）是最常见的触发方式。 -->
-        <p class="mini-msg" id="frameMsg">未开始</p>
-        <button class="btn primary sm" id="loopBtn">开始发帧</button>
-      </div>
-    </section>
-
 <!-- ---------------- 意外统计（给陪同者/家属看） ----------------
          ★ 盲人用户看不到这一屏，所以它不是产品主界面的一部分 —— 但它
            回答的是陪同者最想知道的问题：「这次出门出了几次事」。
@@ -285,39 +272,24 @@
     <div class="col">
 
       <section class="card">
-        <h2><span class="idx">①</span>发帧频率<small>视频帧源已移到手机视图</small></h2>
+        <h2>帧源<small>已在单独一页</small></h2>
         <p class="hint">
-          视频与「开始发帧」在<b>手机视图</b>里 —— 帧必须流起来、播报才有内容，
-          那是交付形态的一部分。这里只留频率旋钮：调试参数不该出现在交付界面上。
+          视频抽帧、发帧频率、单张图片、摄像头占位，全部搬到了
+          <a href="/static/sender.html"><b>帧源模拟器</b></a>（同一端口下的子页）。
+        </p>
+        <p class="hint">
+          <b>为什么要分开</b>：帧源属于<b>设备端</b>（真机上是摄像头），
+          而这一页服务的是<b>看不见屏幕</b>的人 —— 视频条哪怕只有 88px，
+          也是从播报流和求助按钮那里拿走的。分开之后两边还能各走各的：
+          模拟器在笔记本上喂帧、播报界面在手机上看结果。
+        </p>
+        <p class="hint">
+          ★ <b>没有帧源时，播报流永远是空的</b> —— 那不是这一页坏了。
+          先开模拟器点「开始发帧」，再回来看这里。
         </p>
         <div class="row">
-          <label class="field">感知<input type="number" id="perMs" value="2000" min="200" step="100"><span>ms</span></label>
-          <label class="field">安全<input type="number" id="safMs" value="1500" min="100" step="100"><span>ms</span></label>
+          <a class="btn primary" href="/static/sender.html">打开帧源模拟器</a>
         </div>
-        <p class="hint">
-          两条流水线<b>各自独立发包</b>：感知走云端 VLM（1–3 秒），安全走轻量检测（&lt;200ms）
-          —— 这就是 design.md D2 的两条解耦流水线。
-          <br>视频 404 就先跑 <code>python scripts/make_test_video.py</code>。
-        </p>
-      </section>
-
-      <section class="card">
-        <h2><span class="idx">②</span>摄像头<small>接口已就绪</small></h2>
-        <div class="placeholder">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8h3l1.5-2h7L17 8h3v11H4z" fill="none" stroke="currentColor" stroke-width="1.6"/><circle cx="12" cy="13" r="3.4" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>
-          <p>待接入 —— 将来只需 <code>getUserMedia</code> 取流 + 定时抓帧</p>
-          <p class="dim">复用同一个 <code>sendFrame()</code>，后端一行不用改</p>
-        </div>
-      </section>
-
-      <section class="card">
-        <h2><span class="idx">③</span>单张图片<small>拖拽即可</small></h2>
-        <label class="dropzone" id="dropzone">
-          <input type="file" id="file" accept="image/*" multiple hidden>
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5M4 16v2.5A1.5 1.5 0 0 0 5.5 20h13a1.5 1.5 0 0 0 1.5-1.5V16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
-          <span>点这里选图，或把图片拖到页面上</span>
-          <span class="dim">不依赖 demo.mp4，适合快速验证单帧</span>
-        </label>
       </section>
 
       <section class="card">
@@ -360,12 +332,20 @@
 
 <div class="toast" id="toast" hidden></div>
 
+<!-- ★ 启动自检 —— 唯一一段 classic 脚本，**必须排在入口之前**。
+     起因（2026-09-23）：入口（或它 import 的任何一个模块）只要有一处没跑
+     起来，整个模块图都不执行，页面停在初始文案上（「连接中…」「检查中」
+     「准备中…」）—— 看起来像网络慢，实际上一行 JS 都没跑，除了控制台
+     没有任何提示。这类沉默失效正是本项目最不能接受的，所以由它来兜底。
+     实现见 /static/js/boot-check.js（不碰业务，只把第一个错误写到页面上）。 -->
+<script src="/static/js/boot-check.js"></script>
+
 <!-- 入口。原生 ES modules，零构建 —— 仍是"直接打开就能跑"。
      分模块的原因见 web/js/main.js 的头注释：按 index.html 已经划好的
      「产品 / 调试」界线拆，改一处不必翻遍整个文件。
 
-     ★ 只需要这一个 <script>：map.js 也是模块，由 main.js import 进来，
-       加载顺序交给模块图，不再依赖「谁写在前面」。
+     ★ 除上面那段自检外只需要这一个 <script>：map.js 也是模块，由 main.js
+       import 进来，加载顺序交给模块图，不再依赖「谁写在前面」。
        （map.js 仍是唯一依赖第三方运行时的文件，且自带无底图降级。） -->
 <script type="module" src="/static/js/main.js"></script>
 </body>

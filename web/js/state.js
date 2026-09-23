@@ -25,11 +25,14 @@ export const state = {
   frameSeq: 0,
   /** 真实初值由 setTts(true) 定 —— 这是个用耳朵的产品。 */
   ttsOn: false,
-  /** 发帧循环的两个 interval；null 表示没在发。 */
+  /** 发帧循环的两个 interval；null 表示没在发。
+   *  ★ 这两个（连同下面的 frameWarn）只给**帧源模拟器**用（js/sender.js）。
+   *    留在共享状态里是因为 `sendFrame()` 递增的 `frameSeq` 也在这一块 ——
+   *    「谁在发帧」这件事只该有一个真源。 */
   loopTimer: null,
   paused: false,
   filterMin: 0,
-  /** 帧源当前的告警文案（空串 = 正常）。见 dev.js 的 setFrameMsg。 */
+  /** 帧源当前的告警文案（空串 = 正常）。见 js/sender.js 的 setFrameMsg。 */
   frameWarn: "",
 };
 
