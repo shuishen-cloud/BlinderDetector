@@ -511,8 +511,8 @@ video { display: block; width: 100%; }
 }
 
 .phone .card { padding: 15px 15px 16px; }
-.phone .card h2 { font-size: 14.5px; }
-.phone .hint { font-size: 12.5px; }
+.phone .card h2 { font-size: 15.5px; }
+.phone .hint { font-size: 13px; }
 /* ★ 播报流在手机视图里改成**定长 + 内滚**（2026-09-22 调整）。
    原设计是放开内滚、让整页滚（理由见上面的注释：内滚+外滚叠加难用）。
    但实际用下来那个理由不成立：播报每 600ms 一条、只增不减，整页被越撑越长，
@@ -521,14 +521,17 @@ video { display: block; width: 100%; }
    `overscroll-behavior: contain` 正面解决原作者担心的滚动手势串台：
    在播报流里滚到底，不会再把整页带着一起滚。 */
 .phone .feed {
-  /* ★ 高度 = **约两条**（2026-09-23 再定）。
-     一条 .ann 的构成：padding 23 + head 23 + 正文 25 + meta 24 + 进度条 4
-     ≈ 100px；两条 + 9px 间距 ≈ 212px。取 216px 留一点余量。
+  /* ★ 高度 = **一条主角 + 一条余韵**（2026-09-23 重画）。
+     最新那条按「主角」排（正文 20px、色带 5px，一条 ≈ 124px），
+     第二条回到常规尺寸（≈ 100px）。124 + 9 间距 + 100 ≈ 233，取 236。
+     ★ 为什么不再是对称的两条：看这一屏的有两种人 —— 低视力用户和陪同者，
+       两种人问的都是**同一个问题**「刚才说了什么」。把最新那条做大，
+       等于把这个问题在版面上直接答了；第二条只负责「在这之前还说过」。
+       对称两条时两句话一样大，反而要读完才知道哪句是刚说的。
      ★ 为什么是「约」：播报文本长短不一，长句会折行把第二条压出去 ——
-       那时第二条仍可滚动看到，不会丢。要严格等于两条得用 JS 量高度，
-       而播报流的意义是「看到最近发生了什么」，两条多一点不值得上 JS。
+       那时第二条仍可滚动看到，不会丢（下沿的渐隐就为这个）。
      ★ 上一版是 46vh（约 4–5 条），屏幕上留给其它卡片的空间不够。 */
-  height: 216px;
+  height: 236px;
   overflow-y: auto; padding-right: 4px;
   overscroll-behavior: contain;
   /* ★ 底部渐隐（2026-09-23）：条目是按「约两条」裁的，而**真实播报**比
@@ -540,11 +543,35 @@ video { display: block; width: 100%; }
   mask-image: linear-gradient(180deg, #000 calc(100% - 26px), transparent);
 }
 .phone .ann .txt { font-size: 16.5px; }
-/* 最新一条读起来最响 —— 播报流是这条产品的主界面。亮一点的边 + 亮一点的底。 */
+/* ★ 最新一条 = 主角。四重一起加，任何一重单独失效都还分得出：
+     字号 20px（第二条 16.5px）、色带 5px（其余 3px）、更亮的边、更亮的底。 */
 .phone .feed > .ann:first-child {
   border-color: var(--line-2);
   background: linear-gradient(180deg, rgba(255, 255, 255, .075), rgba(255, 255, 255, .02));
+  padding: 13px 15px 14px 18px;
 }
+.phone .feed > .ann:first-child::before { width: 5px; }
+.phone .feed > .ann:first-child .txt {
+  font-size: 20px; line-height: 1.5; font-weight: 500;
+}
+/* 条目头上的三样（来源 / 优先级 / 多久之前）在手机上都要能看清 ——
+   低视力用户靠它们分辨「这条是不是说我」和「是不是刚说的」。 */
+.phone .ann .head .tag { font-size: 12px; }
+.phone .ann .expire-note { font-size: 12px; }
+.phone .feed > .ann:first-child .expire-note { font-size: 12.5px; color: var(--fg-2); }
+/* 契约明细在主角条目上再让一步：它是给验收看的，不该和「刚才说了什么」抢。 */
+.phone .feed > .ann:first-child .meta { opacity: .6; }
+/* ★ priority=3（跌倒 / 求助）在手机视图里**满格**（2026-09-23 重画）。
+   这一档是「现在就得停下来」的事，它必须在一屏里最先被看见 ——
+   所以底色、边框、色带、外光一起上，和 p2 拉开肉眼可见的差距。
+   ★ 放在主角规则**之后**：同分选择器里后写的赢，否则主角的底色会把它盖掉。
+   ★ 桌面调试台不动：那里靠色带反推契约，要的是克制，不是炸。 */
+.phone .feed .ann.p3 {
+  border-color: rgba(251, 113, 133, .55);
+  background: linear-gradient(180deg, rgba(251, 113, 133, .17), rgba(251, 113, 133, .05));
+  box-shadow: 0 0 0 1px rgba(251, 113, 133, .28), 0 10px 28px -18px rgba(244, 63, 94, .85);
+}
+.phone .feed .ann.p3::before { width: 5px; }
 /* ★ #feed 是可聚焦的（tabindex="0"：读屏用户能主动进来逐条读）。键盘 /
    开关设备用户靠焦点环才知道自己「进来了」—— 没有它就没有落点。 */
 .phone .feed:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 12px; }
@@ -558,8 +585,21 @@ video { display: block; width: 100%; }
 /* 契约明细（priority / ttl / haptic / id）在手机视图里**收敛但不删** ——
    播报流只有这一处，删了就再也看不到契约；但也别让它抢正文的注意力。 */
 .phone .ann .meta { margin-top: 7px; opacity: .72; }
-.phone .ann .meta .tag { font-size: 10.5px; }
+.phone .ann .meta .tag { font-size: 11.5px; }
 .phone .feed-foot { margin-top: 13px; }
+
+/* ★ 筛选药（全部 / 重要+ / 紧急）也是**手指**要点的东西，一样按 44px 给。
+   它们在播报流的表头上，而播报流是这一页最常碰的地方 —— 底下的
+   安全按钮（求助 46px、底部栏 48px）都够大了，没道理这几枚缩小。
+   只改手机视图：开发者面板那种鼠标环境不需要这么大。 */
+.phone .chip {
+  display: inline-flex; align-items: center; min-height: 44px;
+  font-size: 13.5px; padding: 6px 14px;
+}
+/* 空播报流：这一屏最常见的「什么都没说」状态，字要大一号 ——
+   低视力用户分不清「空」和「加载中」时，这行字就是唯一的解释。 */
+.phone .empty { font-size: 14px; }
+.phone .empty svg { width: 32px; height: 32px; }
 
 /* 触控目标一律 ≥ 44px。手机上没有 hover，只有手指。 */
 .phone .btn { min-height: 44px; font-size: 14px; }

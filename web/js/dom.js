@@ -13,7 +13,10 @@ export const SOURCE_NAMES = {
   perception: "感知",
   safety: "安全",
   navigation: "导航",
-  emergency: "紧急",
+  // ★ 不叫「紧急」：priority=3 那条优先级标签已经是「紧急」了，两枚并排
+  //   会连成「紧急 紧急」——看起来像页面出错，读屏也会念两遍同一个词。
+  //   这一栏是**来源**（第四层：紧急求助链路），用产品自己的词「求助」。
+  emergency: "求助",
   system: "系统",
 };
 

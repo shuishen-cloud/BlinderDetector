@@ -896,6 +896,29 @@ def test_sound_switch_carries_three_redundant_cues(client):
         "按钮上的文字要跟着状态变"
 
 
+def test_source_tag_never_repeats_the_priority_tag(client):
+    """★ 条目头上那两枚药不能是同一个词。
+
+    起因（2026-09-23，截图里看出来的）：来源药写的是 `emergency: "紧急"`，
+    而 priority=3 的优先级药也写「紧急」—— 一条跌倒播报头上就并排出现
+    「紧急 紧急」。看起来像页面坏了；读屏用户则会连着听到两遍同一个词，
+    以为那是两件事。
+
+    ★ 两枚药回答的是**两个不同的问题**：「谁在说」（来源）和「多要紧」
+      （优先级）。撞词说明其中一枚没把自己的问题答清楚 —— 改掉来源那一枚，
+      优先级保留 `p3 = 紧急 / p2 = 重要` 这套分级词汇。
+    """
+    js = client.get("/static/js/dom.js").text
+    block = js[js.index("SOURCE_NAMES = {"):]
+    block = block[:block.index("};")]
+    names = re.findall(r':\s*"([^"]+)"', block)
+
+    assert names, "来源名表没解析出来"
+    clash = {"紧急", "重要"} & set(names)
+    assert not clash, f"来源名 {clash} 和优先级标签撞词，头上会出现「紧急 紧急」"
+    assert '"求助"' in block, "第四层（紧急求助）的来源名应当是「求助」"
+
+
 def test_health_dot_colour_does_not_contradict_its_words(client):
     """★ 健康药的**颜色不能和文字说反话**。
 
@@ -1202,10 +1225,44 @@ def test_nav_and_feed_are_the_first_two_cards(client):
     blk = css[css.index(".phone .feed"):]
     blk = blk[:blk.index("}")]
     m = re.search(r"height:\s*(\d+)px", blk)
-    assert m, "播报流应是固定像素高度（两条）"
-    # 一条 .ann 约 100px，两条 + 间距 ≈ 212 —— 容一点余量
+    assert m, "播报流应是固定像素高度"
+    # 一条「主角」（≈124）+ 9 间距 + 一条常规（≈100）≈ 233 —— 容一点余量
     assert 190 <= int(m.group(1)) <= 240, \
-        f"播报流高度 {m.group(1)}px 不是「约两条」（应在 190–240）"
+        f"播报流高度 {m.group(1)}px 不是「一条主角 + 一条余韵」（应在 190–240）"
+
+
+def test_the_newest_announcement_is_the_biggest_thing_on_screen(client):
+    """★ 最新那条必须**一眼**比其余的大 —— 四重一起加，缺一重都还分得出。
+
+    动机（2026-09-23 重画）：看这一屏的有两种人 —— 低视力用户和陪同者，
+    两种人问的都是同一个问题「刚才说了什么」。对称的两条一样大时，
+    得把两句话都读完才知道哪句是刚说的；把最新那条做大，等于在版面上
+    直接回答了这个问题。
+
+    ★ 为什么是**四重**而不是只把字放大：字号、色带宽度、边框亮度、底色亮
+      度，任何一重单独失效（换主题、改主题色、用户自定义样式）都还认得出。
+      「靠单一重编码表达重要性」在这套样式里是明令禁止的 —— 见 app.css 顶部。
+    """
+    css = client.get("/static/app.css").text
+
+    base = css[css.index(".phone .ann .txt"):]
+    base = base[:base.index("}")]
+    m = re.search(r"font-size:\s*([\d.]+)px", base)
+    assert m, "常规条目要有明确的字号"
+    normal = float(m.group(1))
+
+    hero = css[css.index(".phone .feed > .ann:first-child .txt"):]
+    hero = hero[:hero.index("}")]
+    m = re.search(r"font-size:\s*([\d.]+)px", hero)
+    assert m, "最新那条要有自己的字号"
+    assert float(m.group(1)) >= normal + 3, \
+        f"最新那条只大了 {float(m.group(1)) - normal}px，眼睛追不出来"
+
+    band = css[css.index(".phone .feed > .ann:first-child::before"):]
+    band = band[:band.index("}")]
+    m = re.search(r"width:\s*(\d+)px", band)
+    assert m and int(m.group(1)) >= 5, \
+        "最新那条的优先级色带要更宽 —— 颜色是给低视力用户的第二重线索"
 
 
 def test_map_startup_is_explicit_not_hidden_in_the_iife(client):
