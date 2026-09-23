@@ -235,6 +235,74 @@ PERCEPTION_SCENES = [
         ts=NOW,
         detail=vision_detail("前方人行道畅通", scene_key="clear", scene_conf=0.72),
     ),
+    # ---- 以下为 2026-09-23 追加 -------------------------------------------------
+    # ★ 一律**追加在末尾**：`index % len(...)` 是轮换的基础，插在中间会让
+    #   index=0/1/2 的既有语义错位，而 tests/ 多处按 index 取值断言。
+    #   追加只把周期从 3 拉长到 6，重复感随之下降。
+    # ★ 新场景刻意覆盖不同的**分类路径**（门 / OCR 电梯 / 静态物）——
+    #   MockVLM 会 pop 掉 scene_key 强制重跑 scene.apply，所以 label 与
+    #   ocr category 必须真的命中 rules/scene.py 里的规则，否则会落到默认分支。
+    Announcement(
+        text="前方两米是玻璃门，注意反光",
+        ttl_ms=4000,
+        dedup_key="vision:scene:door",
+        source=SOURCE_PERCEPTION,
+        priority=PRIORITY_BACKGROUND,
+        id="ann_perception_004",
+        ts=NOW,
+        detail=vision_detail(
+            "前方两米是玻璃门，注意反光",
+            scene_key="door",
+            scene_conf=0.78,
+            objects=[
+                # 命中 _LABEL_RULES 的 ("门", "door", "玻璃") -> door
+                {"label": "玻璃门", "confidence": 0.76, "position": "center",
+                 "bbox": [0.30, 0.25, 0.40, 0.55],
+                 "distance_m": 2.0, "distance_sigma_m": 1.2, "track_id": 21,
+                 "is_known": False, "face_id": None},
+            ],
+        ),
+    ),
+    Announcement(
+        text="右手边有电梯按钮",
+        ttl_ms=4000,
+        dedup_key="vision:scene:elevator",
+        source=SOURCE_PERCEPTION,
+        priority=PRIORITY_BACKGROUND,
+        id="ann_perception_005",
+        ts=NOW,
+        detail=vision_detail(
+            "右手边有电梯按钮",
+            scene_key="elevator",
+            scene_conf=0.84,
+            # 命中 _OCR_RULES 的 ("elevator_button", "elevator")
+            ocr_results=[
+                {"text": "电梯", "category": "elevator_button",
+                 "bbox": [0.62, 0.31, 0.11, 0.08], "confidence": 0.93},
+            ],
+        ),
+    ),
+    Announcement(
+        text="右前方有根电线杆",
+        ttl_ms=4000,
+        dedup_key="vision:scene:static",
+        source=SOURCE_PERCEPTION,
+        priority=PRIORITY_BACKGROUND,
+        id="ann_perception_006",
+        ts=NOW,
+        detail=vision_detail(
+            "右前方有根电线杆",
+            scene_key="static",
+            scene_conf=0.88,
+            objects=[
+                # 命中 _LABEL_RULES 的 ("柱子", "电线杆", "pole", "树", "tree")
+                {"label": "电线杆", "confidence": 0.91, "position": "right",
+                 "bbox": [0.72, 0.20, 0.08, 0.62],
+                 "distance_m": 2.6, "distance_sigma_m": 0.7, "track_id": 22,
+                 "is_known": False, "face_id": None},
+            ],
+        ),
+    ),
 ]
 
 def perception_for_index(i: int) -> Announcement:
