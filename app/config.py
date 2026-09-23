@@ -10,6 +10,13 @@ load_dotenv()
 
 # 实现选择（见 app/core/registry.py）
 VLM_PROVIDER: str = os.getenv("VLM_PROVIDER", "mock")
+DETECTOR: str = os.getenv("DETECTOR", "mock")
+#: 检测器用的模型名（只有 `DETECTOR=qwen_vl` 这类实现会读它）。
+#: 留空则跟着 `VLM_MODEL` 走 —— 通常就是同一个多模态模型。
+DETECTOR_MODEL: str = os.getenv("DETECTOR_MODEL", "")
+#: 第二层的超时。★ 故意比 `VLM_TIMEOUT_MS` 短：第二层是热路径（预算 <200ms），
+#: 用第一层那 8 秒的耐心会让一帧卡在那里，而它本来就是最慢的那个实现。
+DETECTOR_TIMEOUT_MS: int = int(os.getenv("DETECTOR_TIMEOUT_MS", "5000"))
 FRAME_SOURCE: str = os.getenv("FRAME_SOURCE", "video")
 
 # 云端 VLM（本期不接，仅占位。三家都提供 OpenAI 兼容端点）
@@ -18,9 +25,43 @@ VLM_API_KEY: str = os.getenv("VLM_API_KEY", "")
 VLM_MODEL: str = os.getenv("VLM_MODEL", "")
 VLM_TIMEOUT_MS: int = int(os.getenv("VLM_TIMEOUT_MS", "8000"))
 
+# 语音识别（ASR / STT）—— 目的地那一格的服务端识别通道
+#   见 app/core/asr/。默认 `none` = 没有接识别（端侧会退回浏览器识别）；
+#   接真实识别用 `ASR=dashscope`。
+# ★ 地址与 key 默认**跟着 VLM 走**：同一把 dashscope key、同一个兼容端点就能用，
+#   不必为了语音再多配一份凭据（`.env.example` 里也只列 ASR 与 ASR_MODEL）。
+ASR: str = os.getenv("ASR", "none")
+ASR_MODEL: str = os.getenv("ASR_MODEL", "qwen3-asr-flash")
+ASR_BASE_URL: str = os.getenv("ASR_BASE_URL", "") or os.getenv("VLM_BASE_URL", "")
+ASR_API_KEY: str = os.getenv("ASR_API_KEY", "") or os.getenv("VLM_API_KEY", "")
+#: 比 VLM 宽一点：这里要先把音频传上去，弱网下多花的时间花在带宽上。
+ASR_TIMEOUT_MS: int = int(os.getenv("ASR_TIMEOUT_MS", "10000"))
+
+# 第三层：路线数据源（见 app/core/routers/）
+#   builtin = 内置假路网，不依赖网络；baidu = 百度地图步行路线规划
+# ★ 默认 builtin：演示与离线开发不该被网络拖垮。
+#   换成 baidu 需要 BAIDU_AK，且失败会自动降级回 builtin 并如实播报。
+ROUTER: str = os.getenv("ROUTER", "builtin")
+BAIDU_AK: str = os.getenv("BAIDU_AK", "")
+BAIDU_TIMEOUT_MS: int = int(os.getenv("BAIDU_TIMEOUT_MS", "5000"))
+#: 开发开关：配了就从这个本地 JSON 读响应代替 HTTP 请求。
+#: 没有 AK 也能把「真实响应 → 解析 → 警告 → 降级」整条链跑通。
+BAIDU_FIXTURE: str = os.getenv("BAIDU_FIXTURE", "")
+
+# 浏览器端 AK —— 给调试台的地图用（百度 JSAPI GL）。
+# ★ 与服务端 AK 是**两个不同的东西**：类型不同（浏览器端 vs 服务端）、
+#   要开的服务也不同（JavaScript API GL vs 步行路线规划（轻量）），不能混用。
+# 由 `GET /v1/frontend-config` 下发给前端，**不写进 web/ 里的文件**
+# —— 那是托管目录，写死等于提交进仓库。
+BAIDU_BROWSER_AK: str = os.getenv("BAIDU_BROWSER_AK", "")
+
 # 服务
 HOST: str = os.getenv("HOST", "0.0.0.0")
 PORT: int = int(os.getenv("PORT", "8000"))
+
+# 跨源。默认 * 只适合开发 —— 前端由本服务同源托管时其实用不到，
+# 但允许 file:// 直接打开调试台，以及将来 App 端跨源访问。
+CORS_ORIGINS: str = os.getenv("CORS_ORIGINS", "*")
 
 # 素材路径
 FRAMES_DIR: str = os.getenv("FRAMES_DIR", "data/frames")

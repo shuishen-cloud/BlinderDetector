@@ -17,7 +17,6 @@ from app.contracts import (
     PRIORITY_CRITICAL,
     PRIORITY_IMPORTANT,
     RISK_DANGER,
-    RISK_WARNING,
     SOURCE_EMERGENCY,
     SOURCE_PERCEPTION,
     SOURCE_SAFETY,
@@ -26,6 +25,7 @@ from app.contracts import (
     Frame,
     emergency_detail,
     make_dedup_key,
+    route_dedup_key,
     route_detail,
     safety_detail,
     system_detail,
@@ -115,7 +115,7 @@ SAFETY = Announcement(
 NAVIGATION = Announcement(
     text="沿人行道直行 200 米，然后右转进入建国路",
     ttl_ms=15000,
-    dedup_key="nav:step:0",
+    dedup_key=route_dedup_key("r1", "step", 0),
     source="navigation",
     priority=PRIORITY_IMPORTANT,
     id="ann_nav_001",
@@ -126,6 +126,18 @@ NAVIGATION = Announcement(
         total_distance_m=820.0,
         total_duration_s=600.0,
         warnings=["路线已避开天桥和地下通道"],
+        # ★ 样例几何**刻意只有 4 个点**：它会出现在自动生成的
+        #   `docs/api-contract.md` 里，塞进真实路线的 500 多个点会让文档
+        #   膨胀十几 KB 且毫无教学价值。真实几何的形状与此完全相同，
+        #   只是点数多得多（已抽稀 + 量化，见 rules/route.py::_simplify）。
+        #   坐标仅供示意。
+        geometry=[
+            [116.3975, 39.9087],
+            [116.4021, 39.9093],
+            [116.4088, 39.9110],
+            [116.4142, 39.9136],
+        ],
+        coord_system="bd09ll",
     ),
 )
 
@@ -184,11 +196,6 @@ BY_SOURCE = {
 }
 
 
-def for_source(source: str) -> Announcement:
-    """mock 实现用这个：给什么 source 就返回对应样例。"""
-    return BY_SOURCE.get(source, DEGRADED)
-
-
 # --------------------------------------------------------------------------
 # 按帧轮换的场景
 #
@@ -228,37 +235,75 @@ PERCEPTION_SCENES = [
         ts=NOW,
         detail=vision_detail("前方人行道畅通", scene_key="clear", scene_conf=0.72),
     ),
+    # ---- 以下为 2026-09-23 追加 -------------------------------------------------
+    # ★ 一律**追加在末尾**：`index % len(...)` 是轮换的基础，插在中间会让
+    #   index=0/1/2 的既有语义错位，而 tests/ 多处按 index 取值断言。
+    #   追加只把周期从 3 拉长到 6，重复感随之下降。
+    # ★ 新场景刻意覆盖不同的**分类路径**（门 / OCR 电梯 / 静态物）——
+    #   MockVLM 会 pop 掉 scene_key 强制重跑 scene.apply，所以 label 与
+    #   ocr category 必须真的命中 rules/scene.py 里的规则，否则会落到默认分支。
+    Announcement(
+        text="前方两米是玻璃门，注意反光",
+        ttl_ms=4000,
+        dedup_key="vision:scene:door",
+        source=SOURCE_PERCEPTION,
+        priority=PRIORITY_BACKGROUND,
+        id="ann_perception_004",
+        ts=NOW,
+        detail=vision_detail(
+            "前方两米是玻璃门，注意反光",
+            scene_key="door",
+            scene_conf=0.78,
+            objects=[
+                # 命中 _LABEL_RULES 的 ("门", "door", "玻璃") -> door
+                {"label": "玻璃门", "confidence": 0.76, "position": "center",
+                 "bbox": [0.30, 0.25, 0.40, 0.55],
+                 "distance_m": 2.0, "distance_sigma_m": 1.2, "track_id": 21,
+                 "is_known": False, "face_id": None},
+            ],
+        ),
+    ),
+    Announcement(
+        text="右手边有电梯按钮",
+        ttl_ms=4000,
+        dedup_key="vision:scene:elevator",
+        source=SOURCE_PERCEPTION,
+        priority=PRIORITY_BACKGROUND,
+        id="ann_perception_005",
+        ts=NOW,
+        detail=vision_detail(
+            "右手边有电梯按钮",
+            scene_key="elevator",
+            scene_conf=0.84,
+            # 命中 _OCR_RULES 的 ("elevator_button", "elevator")
+            ocr_results=[
+                {"text": "电梯", "category": "elevator_button",
+                 "bbox": [0.62, 0.31, 0.11, 0.08], "confidence": 0.93},
+            ],
+        ),
+    ),
+    Announcement(
+        text="右前方有根电线杆",
+        ttl_ms=4000,
+        dedup_key="vision:scene:static",
+        source=SOURCE_PERCEPTION,
+        priority=PRIORITY_BACKGROUND,
+        id="ann_perception_006",
+        ts=NOW,
+        detail=vision_detail(
+            "右前方有根电线杆",
+            scene_key="static",
+            scene_conf=0.88,
+            objects=[
+                # 命中 _LABEL_RULES 的 ("柱子", "电线杆", "pole", "树", "tree")
+                {"label": "电线杆", "confidence": 0.91, "position": "right",
+                 "bbox": [0.72, 0.20, 0.08, 0.62],
+                 "distance_m": 2.6, "distance_sigma_m": 0.7, "track_id": 22,
+                 "is_known": False, "face_id": None},
+            ],
+        ),
+    ),
 ]
-
-SAFETY_SCENES = [
-    [],  # 无障碍 —— 这一帧不产生任何播报
-    [SAFETY],  # 前方台阶
-    [
-        Announcement(
-            text="右前方约 4 米有自行车过来，靠左走",
-            ttl_ms=6000,
-            dedup_key=make_dedup_key("obstacle", "bicycle", "right", RISK_WARNING, 4.0),
-            source=SOURCE_SAFETY,
-            priority=PRIORITY_IMPORTANT,
-            id="ann_safety_002",
-            ts=NOW,
-            haptic="short",
-            detail=safety_detail(
-                RISK_WARNING,
-                [
-                    {"type": "bicycle", "position": "right",
-                     "distance_m": 4.0, "distance_sigma_m": 1.6,
-                     "risk": RISK_WARNING, "confidence": 0.79, "track_id": 5},
-                ],
-            ),
-        )
-    ],
-]
-
 
 def perception_for_index(i: int) -> Announcement:
     return PERCEPTION_SCENES[i % len(PERCEPTION_SCENES)]
-
-
-def safety_for_index(i: int) -> list[Announcement]:
-    return SAFETY_SCENES[i % len(SAFETY_SCENES)]

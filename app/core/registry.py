@@ -24,9 +24,12 @@ _IMPLS: dict[str, dict[str, type]] = {}
 
 # 会被自动扫描的包 —— 里面的 @register 装饰器在 import 时执行
 _SCAN_PACKAGES = (
+    "app.core.asr",
     "app.core.providers",
+    "app.core.detectors",
     "app.core.layers",
     "app.core.sources",
+    "app.core.routers",
 )
 
 

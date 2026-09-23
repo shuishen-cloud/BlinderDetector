@@ -1,0 +1,847 @@
+/* 灵眸伴途 · 调试台样式
+ *
+ * 只为一个用途服务：**把契约看清楚**。所以色彩全部有语义 ——
+ * 优先级颜色（p0..p3）和播报卡片左边那条色带是同一套取值，
+ * 页面上任何一处颜色都能反推回 priority / 状态。
+ */
+
+:root {
+  --bg: #07090e;
+  --surface: rgba(255, 255, 255, .033);
+  --surface-2: rgba(255, 255, 255, .062);
+  --line: rgba(255, 255, 255, .09);
+  --line-2: rgba(255, 255, 255, .16);
+  --fg: #e9edf5;
+  --fg-2: #a8b2c6;
+  --dim: #6d7891;
+
+  --accent: #5b9dff;
+  --accent-2: #8b6cff;
+  --ok: #34d399;
+  --warn: #fbbf24;
+  --bad: #fb7185;
+
+  /* 与 app/contracts.py 的 PRIORITY_* 一一对应 */
+  --p0: #64748b;
+  --p1: #5b9dff;
+  --p2: #fbbf24;
+  --p3: #fb7185;
+
+  --r: 14px;
+  --shadow: 0 12px 32px -20px rgba(0, 0, 0, .95);
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+}
+
+* { box-sizing: border-box; }
+
+html, body { height: 100%; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font: 14px/1.6 ui-sans-serif, system-ui, -apple-system, "Noto Sans SC", "PingFang SC", sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* 一层极淡的光晕，让纯黑背景不至于发死。纯装饰。 */
+.glow {
+  position: fixed; inset: -30% -10% auto -10%; height: 70vh; pointer-events: none;
+  background:
+    radial-gradient(50% 60% at 18% 0%, rgba(91, 157, 255, .16), transparent 70%),
+    radial-gradient(40% 55% at 82% 0%, rgba(139, 108, 255, .13), transparent 70%);
+  filter: blur(10px);
+}
+
+/* 只给读屏看的文字（视觉上藏起来，但仍在可访问性树里）。
+   用来给**只有占位符**的输入框补一个真 label —— placeholder 不算 label：
+   读屏聚焦到那里时念的是「编辑框」，而不是「要去哪儿」。 */
+.sr {
+  position: absolute; width: 1px; height: 1px;
+  margin: -1px; padding: 0; border: 0;
+  clip-path: inset(50%); overflow: hidden; white-space: nowrap;
+}
+
+/* ===================== 顶栏 ===================== */
+
+.topbar {
+  position: sticky; top: 0; z-index: 20;
+  display: flex; align-items: center; gap: 18px; flex-wrap: wrap;
+  padding: 12px 22px;
+  background: rgba(7, 9, 14, .78);
+  backdrop-filter: blur(14px) saturate(150%);
+  border-bottom: 1px solid var(--line);
+}
+
+.brand { display: flex; align-items: center; gap: 11px; }
+.mark { width: 30px; height: 30px; color: var(--accent); filter: drop-shadow(0 0 12px rgba(91, 157, 255, .45)); }
+.brand-txt h1 { margin: 0; font-size: 16px; font-weight: 650; letter-spacing: .01em; }
+.brand-txt p { margin: 1px 0 0; font-size: 11.5px; color: var(--dim); }
+
+.status { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-left: auto; }
+
+.pill {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 4px 11px; border-radius: 999px;
+  font-size: 12px; color: var(--fg-2);
+  background: var(--surface); border: 1px solid var(--line);
+}
+.pill.tiny { padding: 2px 9px; font-family: var(--mono); font-size: 11px; }
+
+.dot {
+  width: 7px; height: 7px; border-radius: 50%; background: var(--dim);
+  transition: background .2s, box-shadow .2s;
+}
+.dot.on  { background: var(--ok);  box-shadow: 0 0 0 3px rgba(52, 211, 153, .16); animation: pulse 2.4s ease-in-out infinite; }
+.dot.off { background: var(--bad); box-shadow: 0 0 0 3px rgba(251, 113, 133, .16); }
+@keyframes pulse { 50% { box-shadow: 0 0 0 6px rgba(52, 211, 153, .06); } }
+
+/* ===================== 按钮 / 表单 ===================== */
+
+.btn {
+  font: inherit; font-size: 12.5px; color: var(--fg); cursor: pointer;
+  padding: 6px 13px; border-radius: 11px;
+  background: var(--surface-2); border: 1px solid var(--line-2);
+  /* 一道顶部内高光：让平面按钮看起来是「一块」而不是一个矩形色块。 */
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .05);
+  transition: border-color .15s, background .15s, transform .06s;
+}
+.btn:hover:not(:disabled) { border-color: rgba(91, 157, 255, .55); background: rgba(91, 157, 255, .1); }
+.btn:active:not(:disabled) { transform: translateY(1px) scale(.99); }
+.btn:disabled { opacity: .4; cursor: not-allowed; }
+.btn.ghost { background: transparent; }
+.btn.primary {
+  color: #fff; border-color: transparent;
+  background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  box-shadow: 0 8px 20px -12px rgba(91, 157, 255, .9),
+              inset 0 1px 0 rgba(255, 255, 255, .22);
+}
+.btn.running { background: linear-gradient(135deg, #f43f5e, #fb7185); }
+
+input[type=number], input[type=text] {
+  font: inherit; font-size: 12.5px; color: var(--fg);
+  background: rgba(0, 0, 0, .35); border: 1px solid var(--line);
+  border-radius: 8px; padding: 5px 9px; outline: none;
+  transition: border-color .15s;
+}
+input:focus { border-color: rgba(91, 157, 255, .6); }
+input[type=number] { width: 66px; }
+input[type=text]  { flex: 1; min-width: 120px; }
+
+/* 启动自检的报错条（js/boot-check.js）—— 页面 JS 没跑起来时唯一会说话的东西。
+   ★ 用红色实底而不是"提示色"：它说明这一页**现在是坏的**，不是一条提醒。 */
+#bootErr {
+  margin: 0; padding: 12px 22px;
+  background: rgba(251, 113, 133, .16);
+  border-bottom: 1px solid var(--bad);
+  color: var(--fg); font-size: 13px; line-height: 1.5;
+  word-break: break-all;
+}
+
+/* ===================== 统计条 ===================== */
+
+.stats {
+  display: grid; grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 10px; padding: 16px 22px 0;
+}
+.stat {
+  display: flex; flex-direction: column; gap: 2px;
+  padding: 10px 14px; border-radius: 12px;
+  background: var(--surface); border: 1px solid var(--line);
+}
+.stat .k { font-size: 11px; color: var(--dim); letter-spacing: .05em; }
+.stat .v { font: 600 22px/1.1 var(--mono); letter-spacing: -.02em; }
+.stat .v.warn { color: var(--p2); }
+
+/* ===================== 布局 ===================== */
+
+main {
+  display: grid; grid-template-columns: minmax(340px, 430px) minmax(0, 1fr);
+  gap: 16px; align-items: start; padding: 16px 22px 40px;
+}
+.col { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+
+.card {
+  padding: 15px 17px 17px; border-radius: var(--r);
+  /* 极淡的自上而下渐变 + 一道顶部内高光：同样的颜色，但卡片有了厚度。
+     对比度一点没动（这两层都在亮侧，只会把文字衬得更清楚）。 */
+  background: linear-gradient(180deg, rgba(255, 255, 255, .045), rgba(255, 255, 255, .018));
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow), inset 0 1px 0 rgba(255, 255, 255, .04);
+}
+.card > h2, .card-head h2 {
+  display: flex; align-items: center; gap: 8px; margin: 0 0 13px;
+  font-size: 13px; font-weight: 600; color: var(--fg); letter-spacing: .01em;
+}
+.card h2 small { font-size: 11px; font-weight: 400; color: var(--dim); }
+.idx {
+  display: grid; place-items: center; width: 19px; height: 19px; border-radius: 6px;
+  font-size: 11px; color: var(--accent);
+  background: rgba(91, 157, 255, .13); border: 1px solid rgba(91, 157, 255, .28);
+}
+.card-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
+.card-head h2 { margin: 0; }
+.feed-tools { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+.feed-card, .log-card { display: flex; flex-direction: column; }
+
+.row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.row + .row { margin-top: 9px; }
+
+.field { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--dim); }
+.field span { font-size: 11px; }
+
+.hint { margin: 11px 0 0; font-size: 12px; color: var(--dim); }
+
+.hint b { color: var(--fg-2); font-weight: 600; }
+code {
+  font: 11.5px/1.5 var(--mono); color: var(--fg-2);
+  background: rgba(255, 255, 255, .05); border: 1px solid var(--line);
+  border-radius: 5px; padding: 1px 5px;
+}
+.dim { color: var(--dim); }
+
+/* ===================== 帧源 ===================== */
+
+.video-wrap {
+  border-radius: 10px; overflow: hidden; background: #000;
+  border: 1px solid var(--line); margin-bottom: 12px;
+}
+video { display: block; width: 100%; }
+
+/* 帧源模拟器（sender.html）里的视频 —— 单独一页，可以给大。
+   ★ 播报界面（index.html）**没有**视频了（2026-09-23 搬走）：
+     盲人用户看不到画面，那一页每一像素都该留给播报流和求助按钮。 */
+.video-wrap video { max-height: 320px; object-fit: contain; background: #000; }
+
+.btn.sm { padding: 5px 12px; font-size: 12px; }
+
+/* ===================== 帧 ↔ 播报 对照区 =====================
+   帧源页最要紧的一块：左边「刚发出去的这一帧」，右边「它被读成了什么」。
+   ★ 大图必须够清楚 —— 这一栏的用途就是拿肉眼把画面和播报对起来。 */
+.shots { display: flex; gap: 14px; align-items: flex-start; flex-wrap: wrap; }
+.shots-now { margin: 0; flex: 0 0 min(260px, 100%); }
+.shots-now img {
+  width: 100%; display: block; border-radius: 10px;
+  border: 1px solid var(--line); background: #000;
+}
+.shots-now .mini-msg { margin-top: 6px; }
+.shots-list {
+  flex: 1; min-width: 220px; max-height: 320px; overflow: auto;
+  display: flex; flex-direction: column; gap: 8px;
+  overscroll-behavior: contain;     /* 内滚到底别把整页也带着滚 */
+}
+.shot {
+  display: flex; gap: 10px; align-items: flex-start;
+  padding: 8px; border-radius: 10px;
+  border: 1px solid var(--line); background: var(--surface);
+}
+.shot.bad { border-color: var(--bad); }
+.shot > img { width: 96px; flex: 0 0 96px; border-radius: 6px; background: #000; }
+.shot-txt { min-width: 0; }
+.shot-head {
+  margin: 0 0 3px; font: 11px/1.5 var(--mono); color: var(--dim);
+  font-variant-numeric: tabular-nums;
+}
+.shot-said { margin: 2px 0 0; font-size: 12.5px; color: var(--fg-2); }
+/* 被闸门丢掉的也要显示出来，但一眼能和放行的区分开 */
+.shot-said.dropped { color: var(--dim); text-decoration: line-through; }
+
+/* 帧源模拟器页的外层容器 —— 它不是手机视图，不需要 560px 的窄栏。 */
+.sender { max-width: 1080px; margin: 0 auto; }
+
+/* ===================== 折叠区（2026-09-23） =====================
+   ★ 用 `max-height` 折叠，**不要换成 `<details>`**：`<details>` 关闭时
+     内容是 display:none，里面的地图容器就没有布局高度，百度 GL 会
+     **静默不渲染** —— 正是 .map-stage 那段注释警告的坑。
+     max-height 折叠会让内容一直保有布局高度，GL 量得到尺寸。 */
+.fold { margin-top: 12px; border-top: 1px solid var(--line); padding-top: 4px; }
+.fold-head {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  background: none; border: 0; padding: 8px 0; cursor: pointer;
+  font: inherit; font-size: 13.5px; color: var(--fg); text-align: left;
+}
+.fold-head small { margin-left: auto; color: var(--dim); font-size: 11.5px; }
+.fold-head .chev {
+  width: 7px; height: 7px; flex: 0 0 7px;
+  border-right: 2px solid var(--dim); border-bottom: 2px solid var(--dim);
+  transform: rotate(-45deg); transition: transform .2s ease;
+}
+.fold.open .chev { transform: rotate(45deg); }
+.fold-body { max-height: 0; overflow: hidden; transition: max-height .28s ease; }
+.fold.open .fold-body { max-height: 760px; }
+.fold-body .map-stage { margin-top: 8px; }
+
+.mini-msg {
+  margin: 8px 0 0; font-size: 11.5px; color: var(--dim);
+  font-variant-numeric: tabular-nums;
+}
+.mini-msg.warn { color: var(--warn, #f0a020); }
+
+.placeholder, .dropzone {
+  display: flex; flex-direction: column; align-items: center; gap: 6px;
+  padding: 18px 14px; border-radius: 11px; text-align: center;
+  border: 1px dashed var(--line-2); background: rgba(255, 255, 255, .015);
+  color: var(--dim); font-size: 12px;
+}
+.placeholder svg, .dropzone svg { width: 24px; height: 24px; opacity: .6; }
+.placeholder p, .dropzone p { margin: 0; }
+.dropzone { cursor: pointer; transition: border-color .15s, background .15s; }
+.dropzone:hover, .dropzone.over {
+  border-color: rgba(91, 157, 255, .6); background: rgba(91, 157, 255, .07); color: var(--fg-2);
+}
+
+/* ===================== 播报流 ===================== */
+
+.chips { display: flex; gap: 5px; }
+.chip {
+  font: inherit; font-size: 11.5px; color: var(--fg-2); cursor: pointer;
+  padding: 3px 10px; border-radius: 999px;
+  background: transparent; border: 1px solid var(--line);
+  transition: color .15s, background .15s, border-color .15s, box-shadow .15s;
+}
+.chip:hover { border-color: var(--line-2); }
+.chip.on {
+  color: #fff; background: rgba(91, 157, 255, .2); border-color: rgba(91, 157, 255, .55);
+  box-shadow: 0 0 0 3px rgba(91, 157, 255, .1), inset 0 1px 0 rgba(255, 255, 255, .12);
+}
+
+.feed {
+  display: flex; flex-direction: column; gap: 9px;
+  max-height: 58vh; overflow-y: auto; padding-right: 4px;
+}
+
+.ann {
+  position: relative; overflow: hidden;
+  /* ★ 必须 flex-shrink: 0：.feed 是带 max-height 的纵向 flex 容器，
+     而这里的 overflow: hidden 会把 flex 项的自动最小尺寸变成 0 ——
+     条目一多就会被整体压扁，正文和 meta 被裁掉（只剩标题和时间）。 */
+  flex-shrink: 0;
+  padding: 11px 13px 12px 15px; border-radius: 11px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, .045), rgba(255, 255, 255, .015));
+  border: 1px solid var(--line);
+  animation: slide-in .28s cubic-bezier(.2, .8, .3, 1);
+}
+.ann::before {
+  content: ""; position: absolute; inset: 0 auto 0 0; width: 3px; background: var(--p0);
+}
+.ann.p1::before { background: var(--p1); }
+.ann.p2::before { background: var(--p2); }
+.ann.p3::before { background: var(--p3); }
+.ann.sys::before { background: linear-gradient(180deg, var(--accent), var(--accent-2)); }
+.ann.p3 { box-shadow: 0 0 0 1px rgba(251, 113, 133, .18); }
+
+.ann .head { display: flex; align-items: center; gap: 8px; margin-bottom: 5px; }
+.ann .txt { font-size: 15px; line-height: 1.5; }
+.ann .meta { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 9px; }
+.ann .expire-note { font-size: 11px; color: var(--dim); margin-left: auto; }
+
+.tag {
+  font: 11px/1.6 var(--mono); color: var(--fg-2);
+  padding: 0 6px; border-radius: 5px;
+  background: rgba(0, 0, 0, .3); border: 1px solid var(--line);
+}
+.tag.src { color: var(--fg); }
+.tag.hot { color: var(--p3); border-color: rgba(251, 113, 133, .4); }
+
+/* ttl 倒计时。契约里 ttl_ms 是「从端收到起算」，过期即丢 ——
+   这条进度条就是把「它什么时候变成废数据」画出来。 */
+.ttl { height: 3px; margin-top: 10px; border-radius: 2px; background: rgba(255, 255, 255, .07); overflow: hidden; }
+.ttl > i {
+  display: block; height: 100%; width: 100%;
+  transform-origin: left; background: var(--p1); opacity: .55;
+  animation: drain linear forwards;
+}
+.ann.p2 .ttl > i { background: var(--p2); }
+.ann.p3 .ttl > i { background: var(--p3); }
+@keyframes drain { to { transform: scaleX(0); } }
+
+.ann.expired { opacity: .34; filter: saturate(.35); }
+.ann.expired .expire-note { color: var(--bad); }
+
+/* 震动模拟：真实端侧是马达，这里用一次闪烁代替，方便肉眼确认收到了 */
+.ann.haptic { animation: flash .3s ease-out; }
+@keyframes flash { from { background: rgba(139, 108, 255, .3); } }
+@keyframes slide-in { from { opacity: 0; transform: translateY(-6px); } }
+
+.empty {
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+  padding: 34px 0; color: var(--dim); font-size: 12.5px;
+}
+.empty svg { width: 26px; height: 26px; opacity: .5; margin-bottom: 4px; }
+.empty p { margin: 0; }
+
+/* ===================== 日志 ===================== */
+
+.log {
+  font: 12px/1.65 var(--mono); color: var(--fg-2);
+  max-height: 22vh; overflow-y: auto; white-space: pre-wrap; word-break: break-all;
+}
+.log .l-err { color: var(--bad); }
+.log .l-ok  { color: var(--ok); }
+.log .l-dim { color: var(--dim); }
+
+.feed::-webkit-scrollbar, .log::-webkit-scrollbar { width: 8px; }
+.feed::-webkit-scrollbar-thumb, .log::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, .1); border-radius: 4px;
+}
+.feed::-webkit-scrollbar-track, .log::-webkit-scrollbar-track { background: transparent; }
+
+/* ===================== 自适应 ===================== */
+
+@media (max-width: 1000px) {
+  main { grid-template-columns: 1fr; }
+  .feed { max-height: 46vh; }
+}
+@media (max-width: 640px) {
+  .stats { grid-template-columns: repeat(2, 1fr); }
+  .topbar { padding: 10px 14px; }
+  main, .stats { padding-left: 14px; padding-right: 14px; }
+  .status { width: 100%; margin-left: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; }
+}
+
+/* =====================================================================
+   路线可视化（web/map.js）
+   =====================================================================
+
+   ★ 容器**必须有显式高度**。百度 JSAPI GL 往 #map 里塞 canvas，而 canvas
+     高度取决于容器 —— 高度为 0 时它会**静默不渲染**：页面上什么都没有，
+     控制台也不报错。这是接 JSAPI 最常踩的一个坑。
+   ★ 用一个 position:relative 的包裹层，把 JSAPI 自己注入的样式圈在卡片内，
+     不让它影响页面其它部分。
+   -------------------------------------------------------------------- */
+
+.map-stage {
+  position: relative;
+  height: 260px;
+  border-radius: 10px;
+  overflow: hidden;
+  background: #0a0d14;
+  border: 1px solid var(--line);
+  margin-bottom: 12px;
+}
+
+.map-stage #map,
+.map-stage #map-svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+/* ★ 必须显式写：上面的 `display:block` 会盖掉 UA 对 `[hidden]` 的
+   `display:none`，于是 `hidden` 属性形同虚设。
+   后果很具体：那块**透明的大 SVG 会一直盖在地图 canvas 上并吃掉鼠标事件** ——
+   滚轮缩放和拖动全部失灵，而且不报错。
+   （`.map-msg[hidden]` 是同一个坑，那一条当时写了，这条漏了。）
+
+   另外给 SVG 关掉指针事件：它是纯展示用的，本来就不该接收鼠标。 */
+.map-stage #map-svg[hidden] { display: none; }
+.map-stage #map-svg { pointer-events: none; }
+
+/* 没画东西时的整屏提示。背景压暗一点，让下面的示意图若隐若现。 */
+.map-msg {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  padding: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  font-size: 12.5px;
+  line-height: 1.65;
+  color: var(--fg-2);
+  background: rgba(7, 9, 14, .86);
+}
+
+/* 示意图已经画出来了 —— 提示改成底部一条注脚，别把图盖住。 */
+.map-msg.caption {
+  inset: auto 0 0 0;
+  padding: 8px 12px;
+  font-size: 12px;
+  background: rgba(7, 9, 14, .74);
+}
+
+/* ★ 必须显式写：上面的 display:flex 会盖掉 [hidden] 的默认 display:none。 */
+.map-msg[hidden] { display: none; }
+
+/* =====================================================================
+   手机视图（默认显示的那一层）
+   =====================================================================
+
+   ★ 底下的桌面样式全部保留 —— 开发者面板还是那套双栏调试台。
+     这一节只做「按手机使用逻辑」的补丁：单列、大字号、拇指可达的
+     底部操作栏、安全区留白。
+
+   ★ 单列而不是内滚：`.feed` 在桌面版是靠 `max-height` 自己滚的，
+     手机上内滚+外滚叠在一起很难用，所以这里放开内滚、让整页滚。
+     最新一条在最上面（app.js 里 `feed.prepend`），停在顶部就能看见。
+-------------------------------------------------------------------- */
+
+.phone {
+  display: flex; flex-direction: column;
+  min-height: 100dvh;              /* dvh：手机上地址栏收起/展开不会跳 */
+  max-width: 560px; margin: 0 auto;
+  /* ★ 只在这一层把最暗的那档文字提亮一档（--dim 原值 #6d7891 在 --bg 上
+     只有 4.50:1，刚好卡在门槛上；提到 #98a3ba 是 7.86:1）。
+     ★ 为什么用**作用域覆盖**而不是改 :root：桌面调试台是另一套用途，
+       它靠 --dim 把次要信息压低来给契约明细分出层次，跟着一起提亮
+       反而会把那张表读糊。深色是这一整页的底色，这一层才是交付形态。 */
+  --dim: #98a3ba;
+}
+
+/* 顶部常驻区（品牌栏 + 安全操作条）。
+   ★ 用一个包裹层统一 sticky：两个元素各自 `top: 0` 会同时贴住视口顶部、
+     滚动时互相盖住。包裹后里面的 .topbar 改回 static。 */
+.topdock { position: sticky; top: 0; z-index: 40; }
+.topdock .topbar { position: static; }
+
+/* 安全操作条 —— 常驻顶部（2026-09-23，从底部栏挪上来）。
+   .btn.sos 的红色渐变与尺寸沿用原样式，所以求助依然是最大的那个。 */
+.sosbar {
+  display: flex; align-items: stretch; gap: 8px;
+  padding: 8px 14px;
+  background: rgba(7, 9, 14, .92);
+  backdrop-filter: blur(14px) saturate(150%);
+  border-bottom: 1px solid var(--line);
+}
+.sosbar .btn { min-height: 46px; }
+
+/* 刘海/挖孔屏：顶部和底部各让出安全区，别让内容压在系统 UI 底下 */
+.phone .topbar { padding: calc(10px + env(safe-area-inset-top)) 14px 10px; }
+.phone .screen {
+  flex: 1; min-width: 0;
+  display: flex; flex-direction: column; gap: 14px;
+  padding: 14px 14px 18px;
+}
+
+.phone .card { padding: 15px 15px 16px; }
+.phone .card h2 { font-size: 15.5px; }
+.phone .hint { font-size: 13px; }
+/* ★ 播报流在手机视图里改成**定长 + 内滚**（2026-09-22 调整）。
+   原设计是放开内滚、让整页滚（理由见上面的注释：内滚+外滚叠加难用）。
+   但实际用下来那个理由不成立：播报每 600ms 一条、只增不减，整页被越撑越长，
+   导航 / 地图 / 帧源几张卡被一路往下推 —— 想滚到它们反而越来越难。
+   所以改成定长内滚：播报流是一块**稳定的区域**，其余卡片位置不再漂移。
+   `overscroll-behavior: contain` 正面解决原作者担心的滚动手势串台：
+   在播报流里滚到底，不会再把整页带着一起滚。 */
+.phone .feed {
+  /* ★ 高度 = **一条主角 + 一条余韵**（2026-09-23 重画）。
+     最新那条按「主角」排（正文 20px、色带 5px，一条 ≈ 124px），
+     第二条回到常规尺寸（≈ 100px）。124 + 9 间距 + 100 ≈ 233，取 236。
+     ★ 为什么不再是对称的两条：看这一屏的有两种人 —— 低视力用户和陪同者，
+       两种人问的都是**同一个问题**「刚才说了什么」。把最新那条做大，
+       等于把这个问题在版面上直接答了；第二条只负责「在这之前还说过」。
+       对称两条时两句话一样大，反而要读完才知道哪句是刚说的。
+     ★ 为什么是「约」：播报文本长短不一，长句会折行把第二条压出去 ——
+       那时第二条仍可滚动看到，不会丢（下沿的渐隐就为这个）。
+     ★ 上一版是 46vh（约 4–5 条），屏幕上留给其它卡片的空间不够。 */
+  height: 236px;
+  overflow-y: auto; padding-right: 4px;
+  overscroll-behavior: contain;
+  /* ★ 底部渐隐（2026-09-23）：条目是按「约两条」裁的，而**真实播报**比
+     mock 长 —— 一句 25 字的场景描述就折两行，第二条必然被切成半行。
+     硬切看起来像页面坏了（实测截图里就剩半个「注」字），渐隐把
+     「下面还有、能往上滑」这件事画出来，不用加任何 DOM。
+     ★ 只做下沿：上沿渐隐会糊住最新那条 —— 而最新那条是这条产品的主界面。 */
+  -webkit-mask-image: linear-gradient(180deg, #000 calc(100% - 26px), transparent);
+  mask-image: linear-gradient(180deg, #000 calc(100% - 26px), transparent);
+}
+.phone .ann .txt { font-size: 16.5px; }
+/* ★ 最新一条 = 主角。四重一起加，任何一重单独失效都还分得出：
+     字号 20px（第二条 16.5px）、色带 5px（其余 3px）、更亮的边、更亮的底。 */
+.phone .feed > .ann:first-child {
+  border-color: var(--line-2);
+  background: linear-gradient(180deg, rgba(255, 255, 255, .075), rgba(255, 255, 255, .02));
+  padding: 13px 15px 14px 18px;
+}
+.phone .feed > .ann:first-child::before { width: 5px; }
+.phone .feed > .ann:first-child .txt {
+  font-size: 20px; line-height: 1.5; font-weight: 500;
+}
+/* 条目头上的三样（来源 / 优先级 / 多久之前）在手机上都要能看清 ——
+   低视力用户靠它们分辨「这条是不是说我」和「是不是刚说的」。 */
+.phone .ann .head .tag { font-size: 12px; }
+.phone .ann .expire-note { font-size: 12px; }
+.phone .feed > .ann:first-child .expire-note { font-size: 12.5px; color: var(--fg-2); }
+/* 契约明细在主角条目上再让一步：它是给验收看的，不该和「刚才说了什么」抢。 */
+.phone .feed > .ann:first-child .meta { opacity: .6; }
+/* ★ priority=3（跌倒 / 求助）在手机视图里**满格**（2026-09-23 重画）。
+   这一档是「现在就得停下来」的事，它必须在一屏里最先被看见 ——
+   所以底色、边框、色带、外光一起上，和 p2 拉开肉眼可见的差距。
+   ★ 放在主角规则**之后**：同分选择器里后写的赢，否则主角的底色会把它盖掉。
+   ★ 桌面调试台不动：那里靠色带反推契约，要的是克制，不是炸。 */
+.phone .feed .ann.p3 {
+  border-color: rgba(251, 113, 133, .55);
+  background: linear-gradient(180deg, rgba(251, 113, 133, .17), rgba(251, 113, 133, .05));
+  box-shadow: 0 0 0 1px rgba(251, 113, 133, .28), 0 10px 28px -18px rgba(244, 63, 94, .85);
+}
+.phone .feed .ann.p3::before { width: 5px; }
+/* ★ #feed 是可聚焦的（tabindex="0"：读屏用户能主动进来逐条读）。键盘 /
+   开关设备用户靠焦点环才知道自己「进来了」—— 没有它就没有落点。 */
+.phone .feed:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 12px; }
+/* ★ 状态药在手机视图里加重：这两枚药是**唯一**能看出「后端哑了 / 连接断了」
+   的地方 —— 播报流哑掉时只是停住不动，那和「一切都好、只是暂时没人说话」
+   长得一模一样。它值得比装饰文字更响。
+   ★ 加重的是**文字**不是圆点：那个彩色小圆点读屏念不出来（.dot 已
+   aria-hidden），真正的信息在 <span> 里（见 index.html 的 role="status"）。 */
+.phone .pill { font-size: 13px; font-weight: 600; letter-spacing: .01em; }
+.phone .pill .dot { width: 8px; height: 8px; }
+/* 契约明细（priority / ttl / haptic / id）在手机视图里**收敛但不删** ——
+   播报流只有这一处，删了就再也看不到契约；但也别让它抢正文的注意力。 */
+.phone .ann .meta { margin-top: 7px; opacity: .72; }
+.phone .ann .meta .tag { font-size: 11.5px; }
+.phone .feed-foot { margin-top: 13px; }
+
+/* ★ 筛选药（全部 / 重要+ / 紧急）也是**手指**要点的东西，一样按 44px 给。
+   它们在播报流的表头上，而播报流是这一页最常碰的地方 —— 底下的
+   安全按钮（求助 46px、底部栏 48px）都够大了，没道理这几枚缩小。
+   只改手机视图：开发者面板那种鼠标环境不需要这么大。 */
+.phone .chip {
+  display: inline-flex; align-items: center; min-height: 44px;
+  font-size: 13.5px; padding: 6px 14px;
+}
+/* 空播报流：这一屏最常见的「什么都没说」状态，字要大一号 ——
+   低视力用户分不清「空」和「加载中」时，这行字就是唯一的解释。 */
+.phone .empty { font-size: 14px; }
+.phone .empty svg { width: 32px; height: 32px; }
+
+/* ===================== 手机视图的美化（2026-09-23）=====================
+   ★ 这一节**只动观感**：不动对比度、不动任何尺寸契约。
+     交付形态是给低视力用户和陪同者看的，「好看」在这里的标准是
+     **一眼分得清层次**，不是「暗下来显得高级」—— 所以只往亮侧加
+     （内高光、渐变、圆角、投影），绝不加低对比度的灰。
+   ---------------------------------------------------------------- */
+
+/* 圆角统一到 18px：手机上没有鼠标悬停，形状本身就是「这是一块内容」的线索 */
+.phone .card { border-radius: 18px; }
+
+/* 每张卡的标题左侧一道短色条 —— 扫一眼就知道这是哪一张卡 */
+.phone .card > h2::before,
+.phone .card-head h2::before {
+  content: ""; align-self: center; width: 3px; height: 15px; border-radius: 2px;
+  background: linear-gradient(180deg, var(--accent), var(--accent-2));
+}
+
+/* 状态药：整枚跟着状态变色，不再只靠里面那个小圆点。
+   ★ 小圆点对读屏是隐藏的（aria-hidden，它只是颜色），而整枚变色是给
+     **低视力**用户看的：整块色域比 7px 的点好认得多。这仍然只是第三重
+     编码 —— 文字始终写着「已连接 / 断开，重连中… / 正常 / 降级」。 */
+.phone .pill { padding: 5px 12px; transition: border-color .2s, background .2s; }
+.phone .pill.ok  { border-color: rgba(52, 211, 153, .3);  background: rgba(52, 211, 153, .08); }
+.phone .pill.bad { border-color: rgba(251, 113, 133, .45); background: rgba(251, 113, 133, .12); }
+
+/* 播报条目：圆角跟上卡片；最新那条再圆一点，强化「它是主角」 */
+.phone .feed .ann { border-radius: 14px; }
+.phone .feed > .ann:first-child { border-radius: 16px; }
+
+/* 底部操作栏：浮起来一点，别像贴了张纸 */
+.phone .tabbar {
+  border-top-color: var(--line-2);
+  box-shadow: 0 -12px 32px -24px rgba(0, 0, 0, .95);
+}
+.phone .tab { border-radius: 13px; transition: color .15s, background .15s, border-color .15s; }
+
+/* 空状态的图标加一个柔和的圆底，别孤零零浮在黑里 */
+.phone .empty svg {
+  width: 46px; height: 46px; padding: 11px; opacity: .8;
+  border-radius: 50%; background: rgba(255, 255, 255, .04); border: 1px solid var(--line);
+}
+
+/* 触控目标一律 ≥ 44px。手机上没有 hover，只有手指。 */
+.phone .btn { min-height: 44px; font-size: 14px; }
+.phone input[type=text] { min-height: 42px; font-size: 15px; }
+.phone input[type=number] { min-height: 40px; font-size: 15px; }
+
+/* ★ 按住说话（目的地那一格）。
+   `touch-action: none` 是**功能前提**而不是样式：不关掉浏览器的手势，
+   长按会变成「选中文字」或「滚动页面」，松开时 pointerup 收不到，
+   整个交互就废了。`user-select: none` 同理 —— 长按选中会在按钮上糊一层蓝。 */
+.phone .btn.hold {
+  touch-action: none;
+  user-select: none; -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  min-height: 52px;
+  gap: 9px;
+}
+/* 「正在听」用强调蓝而不是红色：这个界面里红色=危险/求助，
+   录音状态借走它，会让「一键求助」那块红色的含义变模糊。 */
+.phone .btn.hold.listening {
+  color: #fff; border-color: rgba(91, 157, 255, .65); background: rgba(91, 157, 255, .22);
+  animation: listen-pulse 1.3s ease-in-out infinite;
+}
+@keyframes listen-pulse { 50% { box-shadow: 0 0 0 7px rgba(91, 157, 255, .12); } }
+.phone .btn.hold.dead { color: var(--bad); border-color: rgba(251, 113, 133, .5); }
+/* 语音连不上（浏览器厂商的云服务不可达）—— 琥珀，不是红：它能恢复，
+   也不等于「这个浏览器没有语音 API」（那种才写 `.dead` 的「语音不可用」）。
+   颜色只是第三重编码：播报流里那条 localNote 把原因和「请直接打字」说全了。 */
+.phone .btn.hold.warn { color: var(--warn); border-color: rgba(251, 191, 36, .45); }
+
+/* 起点显示框（2026-09-23 改）：它既是「起点是从哪算的」的读数，也是那个
+   重新定位的按钮 —— 两件事本来就是同一件。
+   ★ 底色压暗、左对齐：让它读起来像一块**读数框**，而不是又一颗要按的按钮
+     （这一页上要按的东西越少越好）。
+   ★ 颜色只是第三重编码：框里的字永远写着「默认坐标（原因）」。 */
+.phone .btn.geo {
+  display: flex; align-items: center; justify-content: flex-start;
+  gap: 9px; width: 100%; text-align: left; line-height: 1.35;
+  font-weight: 500; background: rgba(0, 0, 0, .3); border-color: var(--line);
+}
+.phone .btn.geo svg { width: 17px; height: 17px; flex: none; color: var(--accent); }
+.phone .btn.geo.warn { color: var(--warn); border-color: rgba(251, 191, 36, .35); }
+.phone .btn.geo.warn svg { color: var(--warn); }
+/* 定位中不把读数整块调暗（.btn:disabled 的 opacity: .4）—— 那会让人以为
+   「起点」这件事本身坏了。忙不忙由框里的字说（「起点：定位中…」）。 */
+.phone .btn.geo:disabled { opacity: 1; cursor: progress; }
+.phone .btn.geo #geoTxt { min-width: 0; }
+
+.btn.wide { flex: 1; min-height: 46px; font-size: 15.5px; font-weight: 600; }
+.btn.icon { padding: 6px; min-width: 36px; }
+
+/* ===================== 底部操作栏 ===================== */
+
+.tabbar {
+  position: sticky; bottom: 0; z-index: 30;
+  display: flex; align-items: stretch; gap: 8px;
+  padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
+  background: rgba(7, 9, 14, .9);
+  backdrop-filter: blur(14px) saturate(150%);
+  border-top: 1px solid var(--line);
+}
+.tabbar .btn { min-height: 48px; }
+
+/* 「一键求助」是这一屏唯一的主操作 —— 占满中间、红得毫不含糊 */
+.btn.sos {
+  flex: 1; min-width: 0;
+  font-size: 16px; font-weight: 650; letter-spacing: .04em; color: #fff;
+  background: linear-gradient(135deg, #f43f5e, #be123c);
+  border-color: transparent;
+  box-shadow: 0 10px 24px -14px rgba(244, 63, 94, .95);
+}
+.btn.sos:hover:not(:disabled) { border-color: transparent; background: linear-gradient(135deg, #fb7185, #e11d48); }
+
+.tab {
+  display: inline-flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 3px; padding: 6px 12px; font-size: 11.5px; line-height: 1.2;
+}
+.tab svg, .btn.wide svg { width: 18px; height: 18px; }
+.btn.wide svg { width: 16px; height: 16px; }
+.tab.on { color: #fff; background: rgba(91, 157, 255, .16); border-color: rgba(91, 157, 255, .5); }
+
+/* ★ 声音开关（#ttsBtn）—— 这一页最要紧的一个开关，全靠肌肉记忆去摸，
+   所以做了三重编码，任何一重单独坏了都还认得出：
+     形状：喇叭 / 喇叭带斜杠（关的时候那个斜杠自己就把话说完了）
+     文字：「声音：开」/「声音：关」
+     颜色：开是中性色，关是琥珀色（＝警示，和状态药同一个语义色）
+   光靠颜色不行 —— 看不见颜色的人不少。见 app.css 顶部那条注释：
+   颜色在这套样式里永远只是**第三重**编码。 */
+#ttsBtn .ico-off { display: none; }
+#ttsBtn[aria-pressed="false"] .ico-on { display: none; }
+#ttsBtn[aria-pressed="false"] .ico-off { display: block; }
+#ttsBtn[aria-pressed="false"] { color: var(--warn); border-color: rgba(251, 191, 36, .45); }
+/* ★ 「不可用」是**第三种**状态，不是「关」的加强版：关是用户自己选的，
+   不可用是这台机器根本念不出来 —— 所以它是红的（=坏），不是琥珀的（=注意）。
+   ★ 必须排在 [aria-pressed="false"] 之后：两者特异性相同，后写的赢。 */
+#ttsBtn.dead { color: var(--bad); border-color: rgba(251, 113, 133, .5); }
+#ttsBtn.dead .ico-on { display: none; }
+#ttsBtn.dead .ico-off { display: block; }
+
+/* ===================== 高级项（起终点坐标） ===================== */
+
+.adv {
+  margin-top: 12px; padding: 0 12px 4px;
+  border: 1px solid var(--line); border-radius: 10px;
+  background: rgba(0, 0, 0, .18);
+}
+.adv > summary {
+  cursor: pointer; padding: 10px 0; font-size: 12.5px; color: var(--fg-2);
+  list-style: none;
+}
+.adv > summary::-webkit-details-marker { display: none; }
+.adv > summary::after { content: "▾"; float: right; color: var(--dim); }
+.adv[open] > summary::after { content: "▴"; }
+.adv .row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.adv .field { display: flex; align-items: center; gap: 6px; }
+.adv .field input { flex: 1; min-width: 0; width: auto; }
+
+/* ===================== 紧急全屏（priority 3） ===================== */
+
+.emg {
+  position: fixed; inset: 0; z-index: 100;
+  display: flex; align-items: center; justify-content: center;
+  padding: 24px;
+  background: rgba(58, 4, 13, .9);
+  backdrop-filter: blur(10px);
+  animation: fade-in .18s ease-out;
+}
+/* ★ 必须显式写：上面的 `display:flex` 会盖掉 UA 对 `[hidden]` 的
+   `display:none`，`hidden` 属性就形同虚设。（app.css 里同一个坑踩过两次。） */
+.emg[hidden] { display: none; }
+
+.emg-in { width: 100%; max-width: 520px; text-align: center; }
+.emg-k { margin: 0 0 12px; font-size: 12.5px; letter-spacing: .34em; color: #ffd7dd; }
+.emg-txt { margin: 0 0 28px; font-size: 26px; line-height: 1.45; font-weight: 650; color: #fff; }
+/* 紧急时刻手是抖的，触控目标要给足 —— 所以按钮做宽、做高，
+   并且整块遮罩都可点（见 app.js: $("emg").onclick）。 */
+.emg-ok {
+  min-height: 56px; width: 100%; max-width: 360px;
+  font-size: 17px; font-weight: 600;
+  background: rgba(255, 255, 255, .14); border-color: rgba(255, 255, 255, .32);
+}
+.emg-hint { margin: 16px 0 0; font-size: 12.5px; color: rgba(255, 255, 255, .62); }
+@keyframes fade-in { from { opacity: 0; } }
+
+/* ===================== 轻提示 ===================== */
+
+.toast {
+  position: fixed; left: 50%; z-index: 90;
+  bottom: calc(86px + env(safe-area-inset-bottom));
+  transform: translateX(-50%);
+  max-width: min(92vw, 460px);
+  padding: 10px 16px; border-radius: 12px;
+  font-size: 13.5px; color: var(--fg);
+  background: rgba(20, 24, 34, .97); border: 1px solid var(--line-2);
+  box-shadow: 0 16px 40px -20px rgba(0, 0, 0, .95);
+  animation: slide-in .2s ease-out;
+}
+.toast[hidden] { display: none; }
+.toast.ok  { border-color: rgba(52, 211, 153, .5); }
+.toast.err { border-color: rgba(251, 113, 133, .55); }
+
+/* =====================================================================
+   开发者面板 —— 测试件，默认 hidden
+   ===================================================================== */
+
+.dev { border-top: 1px dashed var(--line-2); background: rgba(255, 255, 255, .014); }
+.dev[hidden] { display: none; }
+.dev-bar {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 14px 22px 0;
+}
+.dev-bar .btn { margin-left: auto; }
+
+/* 手机上地图不用占满 260px —— 播报流才是主界面。 */
+.phone .map-stage { height: 220px; }
+
+/* 底图确认起不来时（watchRenderer）把 #map 整个藏掉 —— 百度会给它挂一张
+   白灰色的 bg.png，留在示意图底下会让人以为「图在这儿，只是没加载完」。 */
+.map-stage.nomap #map { display: none; }
+
+/* ===================== 意外统计 =====================
+   给陪同者看的：这次出门出了几次事。刻意做得紧凑 —— 它不是主界面，
+   只是回答一个问题，不该跟播报流抢位置。 */
+.inc-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+.inc-head h2 { margin: 0; }
+.inc-list {
+  display: grid; grid-template-columns: auto 1fr; gap: 6px 12px;
+  margin: 0; font-size: 13px;
+}
+.inc-list dt { color: var(--dim); font-size: 12px; letter-spacing: .04em; }
+.inc-list dd { margin: 0; color: var(--fg-2); }
+/* 一行里出现「跌倒·确认 1」时，把它念得响一点 —— 那是真出事了 */
+.inc-list dd:not(:empty) { font-variant-numeric: tabular-nums; }

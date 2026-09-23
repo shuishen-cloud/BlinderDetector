@@ -53,12 +53,20 @@ DOC = f"""# 灵眸伴途 —— 接口契约
 
 > ⚠️ 本文件由 `python scripts/export_contract.py` 自动生成，**不要手改**。
 > 改契约请改 `app/contracts.py`，然后重跑生成脚本。
+>
+> 本文档讲**是什么**；**为什么这么设计**见 [design.md](design.md)。
 
 ## 0. 一句话
 
 全系统只有两个数据结构：**`Frame`（输入）** 和 **`Announcement`（输出）**。
-七条路由全部「入 Frame，出 Announcement」，四层的差异只体现在 `source`
-字段和 `detail` 的形状上。
+业务路由一共十一条，其中**十条**「入 Frame，出 Announcement」（九条 JSON +
+一个 multipart 统一帧入口），四层的差异只体现在 `source` 字段和 `detail`
+的形状上。
+
+唯一的例外是 **`POST /v1/asr`**（见 §4.3）：它出的是**文本**（数据），不是播报。
+端侧要拿它填进目的地那一格，再走导航那条路。把识别结果塞进 `announcements`
+会让「目的地的名字」和「系统要说的话」混成一条 —— 前者进输入框，后者进播报流，
+两件事的去处完全不同。
 
 > 契约版本 1.0　｜　兼容性原则：只加可选字段，不改字段名和类型，不删字段。
 
@@ -74,8 +82,10 @@ DOC = f"""# 灵眸伴途 —— 接口契约
 
 {field_table(C.Announcement)}
 
-**端侧只消费 `text` 字段** + 执行 `haptic` 震动，不需要理解 `detail`。
-业务逻辑、措辞、优先级全部集中在后端。
+**端侧的播报内容只看 `text`**，执行 `haptic` 震动，不需要理解 `detail` 的结构。
+但**还要读 `priority` / `interrupt` / `ttl_ms` 三个字段做播放排序与到期判断**
+（详见 §5）—— 排序、打断、积压、到期不补播都由端侧负责。
+业务逻辑、措辞、优先级判定都在后端。
 
 ### 2.1 `source` 取值
 
@@ -160,28 +170,159 @@ DOC = f"""# 灵眸伴途 —— 接口契约
 
 ## 4. HTTP 路由
 
-| 方法 | 路径 | 入 | 出 |
-| :--- | :--- | :--- | :--- |
-| `POST` | `/v1/perception/describe` | `Frame` | `Announcement` |
-| `POST` | `/v1/safety/analyze` | `Frame` | `Announcement` |
-| `POST` | `/v1/safety/fall` | `Frame` | `Announcement` |
-| `POST` | `/v1/navigation/route` | `Frame` | `Announcement` |
-| `POST` | `/v1/emergency/sos` | `Frame` | `Announcement` |
-| `GET` | `/v1/health` | — | 降级状态 |
-| `WS` | `/v1/stream` | — | 推 `Announcement` |
+| 方法 | 路径 | 入 | 出 | 说明 |
+| :--- | :--- | :--- | :--- | :--- |
+| `POST` | `/v1/perception/describe` | `Frame` | `Announcement` | 第一层 环境感知 |
+| `POST` | `/v1/safety/analyze` | `Frame` | `Announcement` | 第二层 安全预警 |
+| `POST` | `/v1/safety/fall` | `Frame` | `Announcement` | 第二层 跌倒检测 |
+| `POST` | `/v1/navigation/route` | `Frame` | `Announcement` | 第三层 智能导航 |
+| `POST` | `/v1/emergency/sos` | `Frame` | `Announcement` | 第四层 一键求助 |
+| `POST` | `/v1/emergency/cancel` | `Frame` | `Announcement` | 取消求助 / 取消跌倒确认 |
+| `POST` | `/v1/emergency/tick` | `{"now_ms"}` | `Announcement[]` | 推进紧急状态机时钟 |
+| `POST` | `/v1/frame` | multipart | `Announcement` | ★ 统一帧入口（上传图像） |
+| `POST` | `/v1/asr` | multipart | `{{"text","impl","degraded"}}` | ★ 语音识别（音频 → 文本）。**不是**「入 Frame 出 Announcement」，见 §4.3 |
+| `GET` | `/v1/health` | — | 降级状态 | |
+| `GET` | `/v1/frontend-config` | — | 前端配置 | 调试台地图要的浏览器端 AK（不进仓库） |
+| `WS` | `/v1/stream` | — | 推 `Announcement` | |
 
 **路由可能返回空的 `announcements` 数组**（比如前方无障碍），这不代表出错。
+「没出声」和「系统哑了」的区分靠 `/v1/health` 和降级通告。
+
+### 4.0 统一帧入口 `POST /v1/frame`
+
+端侧（摄像头 / 视频抽帧 / 图片文件）只需要这一个「发图」接口。信封与其余
+路由完全一致，区别只是**图像走 multipart 上传**，而不是让 `image_ref` 指一个
+服务端已有的路径。
+
+`multipart/form-data` 字段：
+
+| 字段 | 必填 | 说明 |
+| :--- | :--- | :--- |
+| `image` | ★ 是 | 图像文件本体 |
+| `source` | 否 | `perception`（默认）\\| `safety` — 只有这两层吃图像 |
+| `frame_id` | 否 | 不填则服务端生成 |
+| `ts` | 否 | 毫秒时间戳，不填则取当前时间 |
+| `extra` | 否 | JSON 对象字符串，如 `{{"index":1}}` |
+
+入参不合法返回 **400** 且响应体为 `{{"error": "..."}}`（缺 `image`、`source`
+不在允许集合、`extra` 不是 JSON 对象、`ts` 非整数、空文件）。
+
+> **为什么上传的字节要落盘成临时文件？** 因为 `image_ref` 的语义是
+> 「服务端路径」，`layers/perception.py` 用 `os.path.isfile()` 找它。
+> 落盘一次可以让下游（含未来的真实检测器）一行都不用改。
+> 文件在响应返回前删除。
+
+### 4.1 `Frame.extra` 的约定字段
+
+`Frame` 只有五个字段，各层的差异化入参统一放 `extra`：
+
+| 层 | 字段 | 说明 |
+| :--- | :--- | :--- |
+| 通用 | `index` | 帧序号，测试素材按它轮换场景 |
+| 感知 | — | 只用 `image_ref` |
+| 导航 | `destination` | 目的地（自然语言，仅用于展示与去重键） |
+| 导航 | `geo` | `{{"lat": 39.9, "lng": 116.4}}` 起点坐标（JSON 对象，**WGS-84**） |
+| 导航 | `destination_geo` | 目的地坐标（同上格式）。★ 真实地图 API **只认坐标、不认地名**，不传就只能用内置演示路网 |
+| 导航 | `avoid` | 要避开的障碍，默认 `["overpass","underpass","stairs"]` |
+| 求助 | `kind` | `fall_signal` \\| `sos` \\| `cancel` |
+| 求助 | `signal` | 跌倒传感器窗口，见下 |
+| 求助 | `event_id` | 事件标识，不填则由 `frame_id` 推导 |
+| 求助 | `idempotency_key` | ★ 幂等键，防止重试导致重复呼叫家属 |
+| 求助 | `trigger` | 触发方式，见 §4.2 |
+| 求助 | `method` | 取消方式：`voice` \\| `shake` \\| `screen_tap` \\| `hardware_key` |
+
+跌倒传感器窗口 `signal` 的字段：
+`peak_g`、`free_fall_ms`、`posture`、`post_impact_still_ms`、
+`movement_class`（`still` \\| `walking` \\| `vehicle` \\| `handheld` \\| `unknown`）、
+`on_charger`、`screen_on`。
+
+### 4.2 求助触发方式
+
+{", ".join(f"`{t}`" for t in C.TRIGGERS)}
+
+> ★ **「长按手机侧键 3 秒」在微信小程序和 Web 上都没有对应 API。**
+> 所以触发方式是**可协商的集合**而不是常量，端上有什么能力就上报什么。
+> 冗余触发是安全系统的基本要求 —— 单一触发通道等于单点故障。
+
+### 4.3 语音识别 `POST /v1/asr`
+
+目的地那一格的**服务端**识别通道。端侧录一段音（转成 16 kHz 单声道 WAV），
+服务端交给 `.env` 里 `ASR` 选的实现，回来的**文本**由端侧填进目的地那一格。
+
+`ASR` 取值：`none`（默认，**没有接**识别 —— 端侧会退回浏览器那条）｜
+`dashscope`（用 `VLM_BASE_URL` / `VLM_API_KEY` 同一把 key 调 Qwen 系列）。
+地址与 key 可以用 `ASR_BASE_URL` / `ASR_API_KEY` 单独覆盖。
+
+`multipart/form-data` 字段：
+
+| 字段 | 必填 | 说明 |
+| :--- | :--- | :--- |
+| `audio` | ★ 是 | 音频文件本体。实测通过的是 16 kHz 单声道 PCM16 WAV |
+| `format` | 否 | 容器格式。不填则按文件名后缀猜，再猜不到按 `wav` |
+
+`format` 白名单：`wav` `mp3` `m4a` `aac` `ogg` `opus` `amr` `flac` `webm`。
+白名单之外的值返回 **400**，**不静默替换**（`format` 会进发给厂商的请求体，
+所以它是一条安全边界）。上限 8 MB，超了返回 **413**。
+
+**响应**（成功）：
+
+```json
+{{"text": "带我去太原站。", "impl": "dashscope", "degraded": []}}
+```
+
+| 情形 | `text` | `degraded` | 端侧该做的 |
+| :--- | :--- | :--- | :--- |
+| 识别成功 | 非空 | `[]` | 填进目的地，念一遍「目的地：X」再出发 |
+| 听到了但没听清 | 空串 | `[]` | 「没听清，请再按住说一次」 |
+| **没在听** | 空串 | 非空（带 `reason`） | 如实说原因，换通道或劝打字 |
+
+`degraded[].reason` 取值：
+
+| `reason` | 含义 | 排查方向 |
+| :--- | :--- | :--- |
+| `asr_unavailable` | `ASR=none` —— 本来就没接识别 | 正常状态，选一个实现即好 |
+| `asr_misconfigured` | 实现了，但凭据 / 地址没配齐 | 去查 `.env` |
+| `asr_not_registered` | `ASR` 里的名字没有对应实现 | 去查 `.env`（响应带 `known` 列表） |
+| `asr_failed` | 调厂商失败（超时 / 401 / 429），`detail` 带厂商原话 | 暂时性的，重试 |
+| `asr_error` | 兜底：没预料到的异常 | 看服务端日志 |
+
+> ★ **为什么失败也回 200。** `degraded` 非空和 `text` 为空是两件**完全不同**
+> 的事：前者是「系统哑了」，后者是「我没说清」。回 5xx 会把两者一起压成
+> `HTTP 500`，用户就再也分不出来了 —— 那正是这个接口最忌讳的歧义。
+
+> ★ **`ASR` 不进 `/v1/health` 的降级列表。** 语音识别不是四层核心链路
+> （目的地还能打字）：缺了它，端侧会在按下的**那一刻**如实说出来。挂进降级
+> 列表只会让「降级」这枚徽章长期亮着，把 VLM / 检测器 / 地图那三个**真的**
+> 降级淹掉。它只出现在 `impls` 那份信息性清单里。
+
+> ★ **端侧有两条识别通道，服务端这条优先。** 浏览器那条走的是**厂商的云**
+> （Chrome→Google / Safari→Apple），key 烘在浏览器二进制里、页面里无处可配：
+> 国内网络基本不可用（实测 `error === "network"`），出了事既看不到失败率也
+> 换不掉。服务端识别把这一环拿回自己手里 —— 代价只是松手后多一个往返
+> （`识别中…`）。服务端这条因**配置**问题不可用时，端侧会出声告知并切到
+> 浏览器那条。
 
 ---
 
-## 5. 仲裁器规则
+## 5. 播报闸门规则
 
-四条流水线共用的唯一出口。
+四条流水线共用的唯一出口。它只回答一个问题：**这条值不值得发给端侧？**
 
-1. **TTL 过期直接丢** —— 出队时已过期就不播，绝不补播
-2. **去重** —— `dedup_key` 相同且 3 秒内只播一次
-3. **打断** —— 新 `priority` 严格更高才能打断当前播报，且当前已播够最短时长
-4. **积压保护** —— 队列超 8 条时丢最低优先级
+1. **去重** —— `dedup_key` 相同、且距上次放行不足 3 秒，不发
+2. **废数据** —— `ttl_ms <= 0`，不发
+
+就这样。**服务端不管排序、打断、积压，也不管「当前正在播哪条」。**
+
+> ★ **为什么：喇叭在端侧，服务端观察不到播放状态。**
+> 早期版本在服务端维护「当前播报」+ 优先级队列来模拟播放，连出两个
+> 永久静默的 bug，根因都是**服务端在猜自己看不见的东西**：
+> 没人调 `finish_current()` 导致当前播报永不释放、队列涨满；或
+> `/v1/emergency/tick` 传的未来时间戳让时钟倒流、当前播报永远退不了场。
+> 所以这套状态机被拆掉了。
+
+**排序 / 打断 / 积压 / 到期不补播由端侧负责**，`Announcement` 已经带了
+`priority`、`interrupt`、`ttl_ms` 三个字段供端侧决策。这也正是 `ttl_ms`
+的定义所要求的 —— 见 §2：**从端「收到」起算**。
 
 ### ★ 两条安全关键规则
 

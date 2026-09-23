@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#07090e">
+<meta name="color-scheme" content="dark">
+<title>灵眸伴途 · 帧源模拟器</title>
+<link rel="stylesheet" href="/static/app.css">
+<!--
+  帧源模拟器 —— **单独一页**，与播报界面（`/`）分开。
+
+  为什么分出来（2026-09-23）：
+    ① 帧源属于**设备端**。真机上这一端是摄像头，不是网页里的一段视频 ——
+       不该让「交付形态」背着一台演示机。
+    ② 播报界面服务的是**看不见屏幕**的人。视频条哪怕只有 88px，也是从
+       播报流和求助按钮那里拿走的。
+    ③ 分开后两边各走各的：模拟器在笔记本上喂帧、播报界面在手机上看结果
+       —— 这正是真机的拓扑。
+
+  ★ 为什么是**同一端口下的子页**而不是另开一个端口：
+    跨端口会把 `demo.mp4` 变成跨域资源，`drawImage()` 之后
+    `canvas.toBlob()` 会因画布被**污染**直接抛 SecurityError —— 表现是
+    「按钮变成停止发帧，一帧都没发出去」，正是最危险的那种沉默失效。
+    同一端口没有这个问题；将来接 `getUserMedia` 也少一条 https 的来源限制
+    （127.0.0.1 算安全上下文，局域网 IP 不算）。
+
+  ★ 本页**刻意不做** TTS / 震动：看这一页的是演示者，不是用户的耳朵。
+    三通道反馈（眼/耳/手）属于播报界面 —— 那边不能假设用户在看屏幕。
+
+  ★ `#frameMsg` 这行状态不能省：`grabAndSend()` 在视频没就绪时会直接
+    return，按钮却已经变成「停止发帧」—— 看起来和后端坏了没区别。
+    素材缺失（demo.mp4 是 gitignore 的产物）是最常见的触发方式。
+-->
+</head>
+<body>
+<div class="glow" aria-hidden="true"></div>
+
+<div class="sender">
+  <header class="topbar">
+    <div class="brand">
+      <svg class="mark" viewBox="0 0 32 32" aria-hidden="true">
+        <path d="M16 5.5c6.2 0 11 6.3 12.4 9.1a3 3 0 0 1 0 2.8C27 20.2 22.2 26.5 16 26.5S5 20.2 3.6 17.4a3 3 0 0 1 0-2.8C5 11.8 9.8 5.5 16 5.5Z"
+              fill="none" stroke="currentColor" stroke-width="2"/>
+        <circle cx="16" cy="16" r="4.2" fill="currentColor"/>
+      </svg>
+      <div class="brand-txt">
+        <h1>帧源模拟器</h1>
+        <p>设备端替身 · 只负责喂帧</p>
+      </div>
+    </div>
+    <div class="status">
+      <a class="btn ghost" href="/">← 回到播报界面</a>
+    </div>
+  </header>
+
+  <!-- 帧源自己的计数。`state.js::bump()` 按 id 写进来，所以这两个 id 不能改。
+       ★ 「闸门丢弃」留在这里而不是播报界面：它衡量的是**这一端喂得对不对**。 -->
+  <section class="stats" aria-label="本次会话统计">
+    <div class="stat"><span class="k">发帧</span><span class="v" id="stFrames">0</span></div>
+    <div class="stat"><span class="k">闸门丢弃</span><span class="v" id="stDropped">0</span></div>
+  </section>
+
+  <main>
+    <!-- ==================== 左：帧源与控制 ==================== -->
+    <div class="col">
+
+      <section class="card">
+        <h2>帧源<small>demo.mp4</small></h2>
+        <div class="video-wrap">
+          <video id="video" src="/data/demo.mp4" muted loop playsinline></video>
+        </div>
+        <!-- ★ 这行不是装饰：视频没就绪时 grabAndSend() 会静默跳过 ——
+             按钮已经变成「停止发帧」，一帧都没发出去，看起来和「后端坏了」
+             没有区别。sendFiles / 上传失败也往这里写，是帧源唯一的实话。 -->
+        <p class="mini-msg" id="frameMsg">未开始</p>
+        <div class="row">
+          <button class="btn primary" id="loopBtn">开始发帧</button>
+        </div>
+        <p class="hint">
+          视频 404 就先跑 <code>python scripts/make_test_video.py</code> ——
+          <code>demo.mp4</code> 是 gitignore 的产物，fresh clone 里没有。
+        </p>
+      </section>
+
+      <section class="card">
+        <h2>发帧频率</h2>
+        <p class="hint">
+          两条流水线<b>各自独立发包</b>：感知走云端 VLM（1–3 秒），
+          安全走轻量检测（&lt;200ms）—— 这就是 design.md D2 的两条解耦流水线。
+          频率不同是设计要求，不是一个循环发两次。
+        </p>
+        <div class="row">
+          <label class="field">感知<input type="number" id="perMs" value="2000" min="200" step="100"><span>ms</span></label>
+          <label class="field">安全<input type="number" id="safMs" value="1500" min="100" step="100"><span>ms</span></label>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>单张图片<small>拖拽即可</small></h2>
+        <label class="dropzone" id="dropzone">
+          <input type="file" id="file" accept="image/*" multiple hidden>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5M4 16v2.5A1.5 1.5 0 0 0 5.5 20h13a1.5 1.5 0 0 0 1.5-1.5V16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+          <span>点这里选图，或把图片拖到页面上</span>
+          <span class="dim">不依赖 demo.mp4，适合快速验证单帧</span>
+        </label>
+      </section>
+
+      <section class="card">
+        <h2>摄像头<small>接口已就绪</small></h2>
+        <div class="placeholder">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8h3l1.5-2h7L17 8h3v11H4z" fill="none" stroke="currentColor" stroke-width="1.6"/><circle cx="12" cy="13" r="3.4" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>
+          <p>待接入 —— 将来只需 <code>getUserMedia</code> 取流 + 定时抓帧</p>
+          <p class="dim">复用同一个 <code>sendFrame()</code>，后端一行不用改</p>
+        </div>
+        <p class="hint">
+          <b>真摄像头只在安全上下文可用</b>：<code>http://127.0.0.1</code> 可以，
+          <code>http://192.168.x.x</code> 不行（要被浏览器直接拒绝）。
+          所以演示视频这条路随时可用，真机那条必须 HTTPS。
+        </p>
+      </section>
+    </div>
+
+    <!-- ==================== 右：帧 ↔ 播报 对照 ==================== -->
+    <div class="col">
+      <section class="card">
+        <h2>发出去的帧<small>和播报对照</small></h2>
+        <p class="hint">
+          左边是<b>刚发出去的那一帧</b>（与上传给后端的是同一份像素，不是
+          「视频现在播到哪儿」—— 两者差着好几拍）；右边是这一帧被系统读成了什么。
+          <b>播报界面上的那条播报应该和这里对得上</b>。
+        </p>
+        <p class="hint">
+          对不上时，三种故障在这一栏里长得完全不一样：<b>没有条目</b>＝帧没发出去
+          （看左边视频与上面的状态行）；<b>有条目但没文案</b>＝模型没看出东西；
+          <b>文案标着「闸门丢弃」</b>＝读对了，但闸门当重复/过期吃掉了。
+        </p>
+        <div class="shots">
+          <figure class="shots-now">
+            <!-- ★ 这张大图就是「正在发送的帧」的实物：像素取自
+                 grabAndSend() 里刚画好、随后上传的那张 canvas。 -->
+            <img id="lastShot" alt="" hidden>
+            <figcaption class="mini-msg" id="lastShotCap">还没有发帧</figcaption>
+          </figure>
+          <!-- 历史：新在上。上限由 sender.js 的 SHOTS_MAX 控制。 -->
+          <div class="shots-list" id="frameCards"></div>
+        </div>
+      </section>
+
+      <section class="card log-card">
+        <div class="card-head">
+          <h2>上传日志<small>每一拍的闸门结果</small></h2>
+          <span class="pill tiny" id="logTail">—</span>
+        </div>
+        <!-- ★ 复用了 `log.js`：它写的是 #log / #logTail，缺了就是 no-op。
+             放在这一页还有个好处 —— 帧源的问题不必再翻到播报界面的
+             开发者面板里去看，那里本来就默认隐藏。 -->
+        <div class="log" id="log"></div>
+      </section>
+    </div>
+  </main>
+</div>
+
+<!-- 启动自检：与播报界面同一段（见 boot-check.js 的头注释）。
+     帧源页的 JS 要是没跑起来，这里同样只会看到「未开始」+ 一片空白 ——
+     和「后端没收到帧」长得一模一样，所以一样需要它。 -->
+<script src="/static/js/boot-check.js"></script>
+
+<script type="module" src="/static/js/sender.js"></script>
+</body>
+</html>

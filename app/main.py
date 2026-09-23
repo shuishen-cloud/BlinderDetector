@@ -1,14 +1,31 @@
-"""
-灵眸伴途 —— Starlette 应用装配。
+"""灵眸伴途 —— Starlette 应用装配。
 
-七条路由全部「入 Frame，出 Announcement」：
-    POST /v1/perception/describe
-    POST /v1/safety/analyze
-    POST /v1/safety/fall
-    POST /v1/navigation/route
-    POST /v1/emergency/sos
-    GET  /v1/health
-    WS   /v1/stream
+这个文件**只做装配**：建状态、连出口、挂路由。实现分别在：
+
+    app/api/routes.py     路由表 + 小 handler（tick / health / 调试台）
+    app/api/uploads.py    ★ 统一帧入口 POST /v1/frame（multipart）
+    app/api/speech.py     ★ POST /v1/asr —— 音频 → 文本（唯一不返回 Announcement 的业务入口）
+    app/api/envelope.py   统一信封：入 Frame，出 Announcement
+    app/api/hub.py        WS 播报通道
+    app/core/             业务逻辑（各层编排、规则、provider）
+
+全部路由都是「入 `Frame`，出 `Announcement`」：
+
+    POST /v1/perception/describe   第一层 环境感知
+    POST /v1/safety/analyze        第二层 安全预警
+    POST /v1/safety/fall           第二层 跌倒检测
+    POST /v1/navigation/route      第三层 智能导航
+    POST /v1/emergency/sos         第四层 一键求助
+    POST /v1/emergency/cancel      取消求助 / 取消跌倒确认
+    POST /v1/emergency/tick        推进紧急状态机时钟
+    POST /v1/frame                 ★ 统一帧入口（multipart 上传图像）
+    POST /v1/asr                   语音识别（multipart 音频 → 文本，见 api/speech.py）
+    GET  /v1/health                健康检查 + 降级状态
+    GET  /v1/frontend-config       调试台地图要的浏览器端 AK（从 .env 下发）
+    WS   /v1/stream                统一播报下发
+    GET  /                         前端调试台
+    GET  /static/*                 调试台的 css / js / 地图面板
+    GET  /data/*                   测试素材（demo.mp4 / frames）
 
 启动：
     uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
@@ -16,191 +33,100 @@
 
 from __future__ import annotations
 
-import time
-from typing import Any
-
 from starlette.applications import Starlette
-from starlette.responses import JSONResponse
-from starlette.routing import Route, WebSocketRoute
-from starlette.websockets import WebSocket, WebSocketDisconnect
+from starlette.datastructures import MutableHeaders
+from starlette.middleware.cors import CORSMiddleware
 
 from app import config
-from app.contracts import (
-    PRIORITY_IMPORTANT,
-    SOURCE_SYSTEM,
-    Announcement,
-    Frame,
-    system_detail,
-)
+from app.api.envelope import Envelope
+from app.api.hub import Hub
+from app.api.routes import build_routes, make_degraded_announcer
 from app.core import registry
 from app.core.arbiter import Arbiter
 
+# 路径常量住在 app/paths.py（api 层也要用），这里转出来是为了让
+# `from app.main import UPLOAD_DIR` 这种老写法继续可用 —— 测试在用。
+# noqa 因为确实没有任何一行代码「读」它们。
+from app.paths import BASE_DIR, DATA_DIR, UPLOAD_DIR, WEB_DIR  # noqa: F401
 
-def now_ms() -> int:
-    return int(time.time() * 1000)
+LAYER_NAMES = ("perception", "safety", "navigation", "emergency")
 
-
-# --------------------------------------------------------------------------
-# WebSocket 广播
-# --------------------------------------------------------------------------
-
-
-class Hub:
-    """把播报推给所有连接的前端。"""
-
-    def __init__(self) -> None:
-        self.clients: set[WebSocket] = set()
-
-    async def connect(self, ws: WebSocket) -> None:
-        await ws.accept()
-        self.clients.add(ws)
-
-    def disconnect(self, ws: WebSocket) -> None:
-        self.clients.discard(ws)
-
-    async def broadcast(self, payload: dict[str, Any]) -> None:
-        for ws in list(self.clients):
-            try:
-                await ws.send_json(payload)
-            except Exception:
-                self.disconnect(ws)
+#: 需要「回源确认」的前端路径。见 NoCacheFrontend 的说明。
+NO_CACHE_PREFIXES = ("/static/",)
 
 
-hub = Hub()
-arbiter = Arbiter()
+class NoCacheFrontend:
+    """给前端文件补上 `Cache-Control: no-cache` —— 即**每次回源确认**。
 
+    ★ 为什么必须有（2026-09-23，实测踩到的）：
+      `web/map.js` 从 classic 脚本改成了 ES module（末尾由
+      `window.LingmouMap = {...}` 变成 `export default`），而浏览器留着旧的那份
+      （同一个 URL，服务器又没发 Cache-Control，于是命中启发式缓存）。
+      后果**不是**「样式旧了」这种看得见的问题，而是入口直接抛：
 
-# --------------------------------------------------------------------------
-# 路由处理器
-# --------------------------------------------------------------------------
+          Uncaught SyntaxError: The requested module '../map.js'
+          does not provide an export named 'default'
 
+      —— **整个模块图一行都不执行**，页面停在初始文案上（「连接中…」
+      「检查中」），看起来像网络慢。这正是本项目最不能接受的那类沉默失效。
 
-def _frame_from_body(body: dict[str, Any], source: str) -> Frame:
-    return Frame(
-        frame_id=body.get("frame_id") or f"f{now_ms()}",
-        ts=body.get("ts") or now_ms(),
-        image_ref=body.get("image_ref"),
-        source=source,
-        extra=body.get("extra") or {},
-    )
+    ★ 代价几乎为零：`no-cache` 不是「不缓存」，是「用之前回源确认」。
+      响应本来就带 ETag / Last-Modified，没变就是 304，不重传正文。
 
-
-def make_handler(layer, source: str):
-    """layer 在启动时实例化一次 —— 层可能持有状态（比如跌倒检测的活跃事件）。"""
-
-    async def handler(request):
-        try:
-            body = await request.json()
-        except Exception:
-            body = {}
-
-        frame = _frame_from_body(body, source)
-        anns: list[Announcement] = await layer.handle(frame)
-
-        # 过仲裁器 -> 推给前端
-        for ann in anns:
-            verdict = arbiter.submit(ann, frame.ts)
-            if verdict.startswith("dropped"):
-                continue
-            await hub.broadcast({"type": "announcement", "data": ann.to_dict()})
-
-        return JSONResponse(
-            {
-                "frame": frame.to_dict(),
-                "announcements": [a.to_dict() for a in anns],
-                "arbiter": {
-                    "spoken": sorted(arbiter.spoken_ids),
-                    "dropped": [
-                        {"id": a.id, "reason": r} for a, r in arbiter.dropped[-5:]
-                    ],
-                },
-            }
-        )
-
-    return handler
-
-
-async def health(request):
-    """★ 沉默不能有歧义。
-
-    用户若不知道系统哑了，会把「没出声」理解为「环境安全」。
+    ★ `/data/*` **有意不加**：素材旧了是**看得见**的（画面不对），
+      而模块旧了是沉默的 —— 只有后者值得付这份代价。
     """
-    degraded: list[dict[str, Any]] = []
-    try:
-        vlm = registry.get("vlm", config.VLM_PROVIDER)
-        if not await vlm.health():
-            degraded.append({"reason": "vlm_unavailable"})
-    except Exception as e:
-        degraded.append({"reason": "vlm_error", "detail": str(e)})
 
-    return JSONResponse(
-        {
-            "ok": not degraded,
-            "degraded": degraded,
-            "impls": {
-                "vlm": registry.names("vlm"),
-                "layer": registry.names("layer"),
-                "framesource": registry.names("framesource"),
-            },
-            "config": {
-                "VLM_PROVIDER": config.VLM_PROVIDER,
-                "FRAME_SOURCE": config.FRAME_SOURCE,
-            },
-        }
-    )
+    def __init__(self, app) -> None:
+        self.app = app
 
+    async def __call__(self, scope, receive, send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)   # WS 原样放过
+            return
 
-async def stream(ws: WebSocket):
-    await hub.connect(ws)
-    try:
-        await ws.send_json({"type": "hello", "data": {"ts": now_ms()}})
-        while True:
-            msg = await ws.receive_json()
-            if msg.get("type") == "ping":
-                await ws.send_json({"type": "pong", "data": {"ts": now_ms()}})
-    except WebSocketDisconnect:
-        pass
-    finally:
-        hub.disconnect(ws)
+        path = scope["path"]
+        if path != "/" and not path.startswith(NO_CACHE_PREFIXES):
+            await self.app(scope, receive, send)
+            return
 
+        async def send_with_no_cache(message):
+            if message["type"] == "http.response.start":
+                MutableHeaders(scope=message)["Cache-Control"] = "no-cache"
+            await send(message)
 
-async def broadcast_degraded(reason: str) -> None:
-    """降级时显式通告，别让系统静默。"""
-    ann = Announcement(
-        text="系统部分功能暂时不可用",
-        ttl_ms=10000,
-        dedup_key=f"system:degraded:{reason}",
-        source=SOURCE_SYSTEM,
-        priority=PRIORITY_IMPORTANT,
-        detail=system_detail(reason),
-    )
-    await hub.broadcast({"type": "announcement", "data": ann.to_dict()})
-
-
-# --------------------------------------------------------------------------
-# 装配
-# --------------------------------------------------------------------------
+        await self.app(scope, receive, send_with_no_cache)
 
 
 def create_app() -> Starlette:
+    """装配一个新的应用实例。
+
+    hub / arbiter / 各层实例都在这里创建 —— 它们都持有状态，
+    不能做成模块级单例，否则多个 app 实例（主要是测试）会互相污染。
+    """
     registry.load_all()  # 触发各实现模块的 @register
 
-    # 每层实例化一次并复用 —— 有状态的层（跌倒检测）靠这个保住状态
-    layers = {
-        name: registry.get("layer", name)
-        for name in ("perception", "safety", "navigation", "emergency")
-    }
+    hub = Hub()
+    arbiter = Arbiter()
+    envelope = Envelope(hub, arbiter)
+    layers = {name: registry.get("layer", name) for name in LAYER_NAMES}
 
-    routes = [
-        Route("/v1/perception/describe", make_handler(layers["perception"], "perception"), methods=["POST"]),
-        Route("/v1/safety/analyze", make_handler(layers["safety"], "safety"), methods=["POST"]),
-        Route("/v1/safety/fall", make_handler(layers["emergency"], "emergency"), methods=["POST"]),
-        Route("/v1/navigation/route", make_handler(layers["navigation"], "navigation"), methods=["POST"]),
-        Route("/v1/emergency/sos", make_handler(layers["emergency"], "emergency"), methods=["POST"]),
-        Route("/v1/health", health, methods=["GET"]),
-        WebSocketRoute("/v1/stream", stream),
-    ]
-    return Starlette(routes=routes)
+    # 上传帧要落盘，目录得先存在（fresh clone 时 data/ 整个都不在）
+    UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+
+    app = Starlette(routes=build_routes(hub, envelope, layers))
+    app.add_middleware(NoCacheFrontend)
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=[o.strip() for o in config.CORS_ORIGINS.split(",") if o.strip()],
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+    app.state.hub = hub
+    app.state.arbiter = arbiter
+    app.state.layers = layers
+    app.state.broadcast_degraded = make_degraded_announcer(hub)
+    return app
 
 
 app = create_app()

@@ -1,0 +1,400 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#07090e">
+<meta name="color-scheme" content="dark">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>灵眸伴途</title>
+<link rel="stylesheet" href="/static/app.css">
+<!--
+  页面分两层，默认只显示第一层：
+
+    ① 手机视图 `#app`        —— 交付形态，按手机使用逻辑排：
+                                播报流为主、底部大按钮、紧急全屏。
+    ② 开发者面板 `#devPanel`  —— 契约验证用的测试件，**默认隐藏**。
+                                两个入口：地址栏 `?dev=1`，或右上角 ⚙。
+                                选择记在 localStorage，刷新后保持。
+
+  ★ 隐藏 ≠ 删除：测试件仍然在 DOM 里。`app.js` / `map.js` 一律按 id 取用，
+    元素真的被删掉会当场报错。所以是 `hidden`，翻出来就能继续验证契约。
+
+  文件分工（逻辑按「产品 / 调试」这条界线拆，与页面两层一一对应）：
+    index.html     结构
+    app.css        样式（含深色主题的全部取值）
+    js/main.js     入口装配
+    js/ui.js       ★ 产品界面：播报流 / 紧急全屏 / 提示 / 语音 / 筛选暂停清空
+    js/dev.js      ★ 调试件：面板开关 / 其余路由 / 健康 / 统计
+    js/sender.js   ★ 帧源模拟器（在**另一页** sender.html 里）：抓帧并上传
+    js/net.js      传输：POST /v1/frame、WS /v1/stream、其余 POST 路由
+    js/state.js    共享状态（单一真源）
+    js/log.js      请求日志（产品逻辑也要记，故独立成文件）
+    js/dom.js      $ 与常量
+    map.js         路线可视化（★ 唯一一处外部运行时：百度 JSAPI GL，从 CDN 拉。
+                   加载失败会退回纯 SVG 示意图，且**失败只落在卡片内**，
+                   不影响播报流与请求日志。保持独立脚本，未并入模块）
+
+  ★ map.js 是这套代码里唯一依赖第三方运行时的地方。它必须满足两条：
+    ① 失败可见且局限在自己的卡片里（不碰 window.onerror、不进请求日志）；
+    ② 没有它时整个页面照常工作。
+
+  ★ 关于 extra.index：两个 mock（MockVLM / MockDetector）都靠
+    `index % len(场景表)` 轮换场景（2026-09-23 由 3 个扩到 6 个）。
+    所以这里必须发**递增**的序号 —— 固定 index 会让闸门把后续全部当
+    重复丢掉，页面上只会看到一条。
+
+  ★ 帧源**不在这里**（2026-09-23 搬走）：视频抽帧 / 发帧频率 / 单张图片 /
+    摄像头，全部在 `sender.html` + `js/sender.js` —— 同一端口下的另一页。
+    理由是帧源属于**设备端**（真机上是摄像头），而这一页服务的是
+    看不见屏幕的人；分开之后两边还能各走各的（模拟器在笔记本上喂帧、
+    这页在手机上看结果）。两边共用同一个上传出口 POST /v1/frame（multipart）。
+
+    ★ 代价要说清楚：这一页自己**不喂帧**了，所以单独打开它时播报流必然是空的。
+      那不是页面坏了 —— 开发者面板里那张「帧源」卡有入口和说明。
+-->
+</head>
+<body>
+<div class="glow" aria-hidden="true"></div>
+
+<!-- ================================================================
+     ① 手机视图 —— 交付形态
+     ================================================================ -->
+<div class="phone" id="app">
+
+  <!-- 顶部常驻区：品牌栏 + 安全操作条一起 sticky。
+       ★ 不能各自 sticky top:0 —— 两个都会贴住视口顶部，滚动时互相盖住。 -->
+  <div class="topdock">
+  <header class="topbar">
+    <div class="brand">
+      <svg class="mark" viewBox="0 0 32 32" aria-hidden="true">
+        <path d="M16 5.5c6.2 0 11 6.3 12.4 9.1a3 3 0 0 1 0 2.8C27 20.2 22.2 26.5 16 26.5S5 20.2 3.6 17.4a3 3 0 0 1 0-2.8C5 11.8 9.8 5.5 16 5.5Z"
+              fill="none" stroke="currentColor" stroke-width="2"/>
+        <circle cx="16" cy="16" r="4.2" fill="currentColor"/>
+      </svg>
+      <div class="brand-txt">
+        <h1>灵眸伴途</h1>
+        <p>出行陪伴 · 实时播报</p>
+      </div>
+    </div>
+
+    <div class="status">
+      <!-- ★ 状态药的 dot 是**纯视觉**的（读屏念不出来），所以每一枚都带
+           role="status" + aria-label：读屏念的是「连接状态：已连接」这种整句，
+           而不是光秃秃的「已连接」—— 后者听不出说的是哪一路。 -->
+      <span class="pill" id="wsPill" role="status" aria-label="连接状态">
+        <i class="dot" id="wsDot" aria-hidden="true"></i><span id="wsTxt">连接中…</span></span>
+      <span class="pill" id="hPill" title="健康检查" role="status" aria-label="系统状态">
+        <i class="dot" id="hDot" aria-hidden="true"></i><span id="hTxt">检查中</span></span>
+      <button class="btn ghost icon" id="devBtn" aria-pressed="false"
+              title="开发者模式（测试件）" aria-label="开发者模式">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <circle cx="12" cy="12" r="3.1" fill="none" stroke="currentColor" stroke-width="1.6"/>
+          <path d="M12 3.6v2.2M12 18.2v2.2M20.4 12h-2.2M5.8 12H3.6M17.9 6.1l-1.6 1.6M7.7 16.3l-1.6 1.6M17.9 17.9l-1.6-1.6M7.7 7.7 6.1 6.1"
+                fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+        </svg>
+      </button>
+    </div>
+  </header>
+
+  <!-- 安全操作条 —— 常驻顶部（2026-09-23，从底部栏挪上来）。
+       ★ 要求是「一直都在最顶端」，所以放进 .topdock 跟品牌栏一起 sticky。
+       ★ 一句提醒：顶部是单手最难够到的位置。真机单手操作时拇指够不到，
+         如果实际用起来觉得别扭，把这两个按钮放回 .tabbar 即可 ——
+         结构、data-route、文案都不用改，只是挪个位置。 -->
+  <div class="sosbar">
+    <button class="btn sos" data-route="/v1/emergency/sos"
+            data-body='{"extra":{"index":1,"kind":"sos"}}'>一键求助</button>
+    <button class="btn ghost" data-route="/v1/emergency/cancel"
+            data-body='{"extra":{"kind":"cancel"}}'>取消求助</button>
+  </div>
+  </div>
+
+  <div class="screen">
+
+<!-- ---------------- 导航（第三层） ---------------- -->
+    <section class="card">
+      <h2>导航</h2>
+
+      <div class="row">
+        <!-- ★ placeholder 不是 label：读屏用户聚焦到这里时，念的是「编辑框」
+             而不是「要去哪儿」。加一个只给读屏看的 label（.sr）。 -->
+        <label class="sr" for="dest">目的地</label>
+        <input type="text" id="dest" value="太原站" placeholder="要去哪儿" enterkeyhint="go" autocomplete="off">
+      </div>
+      <!-- ★ 按住说话 —— 目的地那一格的主要输入方式。
+           看不见屏幕的人打字要多难受有多难受：先调出屏幕键盘，再在一个看不见的
+           输入框里逐字确认。按住 / 松开这套，状态就长在手指上，不存在「忘了关」。
+           ★ 它是**长按**，不是点击：pointerdown 起、pointerup 停，
+             所以 CSS 里必须 touch-action: none（否则长按会变成滚动或选中）。
+           ★ 松开之后文本落进上面那个 #dest —— 和打字同一个落点，后面的路一步没变。 -->
+      <div class="row">
+        <button class="btn hold wide" id="talkBtn" type="button" aria-label="按住说话">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5a3 3 0 0 1 3 3v5a3 3 0 0 1-6 0v-5a3 3 0 0 1 3-3zM6.5 11.5a5.5 5.5 0 0 0 11 0M12 17v3.5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+          <span id="talkTxt">按住说话</span>
+        </button>
+      </div>
+      <!-- ★ 没有「开始导航」按钮（2026-09-23 删）。
+             它是一道多余的门：目的地已经有了两条输入方式，而两条都是
+             **说完/打完就出发** —— 语音松开即走，打字敲回车（手机软键盘上
+             那颗「前往」就是回车，见 `enterkeyhint="go"`）。留着这个按钮
+             只会让人以为「说完还得再按一下」，多一步、多一个要摸的东西。
+             两条路在 `js/nav.js::submitRoute()` 上合成一条，那是唯一的出口。 -->
+      <div class="row">
+        <!-- ★ 起点：**显示框**，不是按钮（2026-09-23 改）。
+             框里写的就是「起点是从哪算的」，点一下重新定位 —— 状态与动作是
+             同一件事，合成一个东西，少一个要用户去配对的按钮。
+             进页面自动取；拿不到就如实写「默认坐标（原因）」并标黄 + 播报。
+             ★ 不加 aria-live：要出声的只有**降级**那一种情况，走 nav.js 的
+               localNote（TTS / 读屏二选一，见 ui.js::paintTts 的规矩）；
+               常态下没有新消息就不该有声音。
+             ★ 文字在 #geoTxt 里（和 talkTxt / ttsTxt / hTxt 一个写法），
+               读屏读到的是 aria-label（含「点击重新定位」）。 -->
+        <button class="btn geo wide" id="geoBtn" type="button" title="点击重新定位起点">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21.5s6.8-6.2 6.8-11.2a6.8 6.8 0 1 0-13.6 0c0 5 6.8 11.2 6.8 11.2z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><circle cx="12" cy="10.3" r="2.5" fill="none" stroke="currentColor" stroke-width="1.7"/></svg>
+          <span id="geoTxt">起点：定位中…</span>
+        </button>
+      </div>
+
+      <details class="adv">
+        <summary>起终点坐标（高级）</summary>
+        <div class="row">
+          <label class="field">起点<input type="text" id="geo-lat" value="37.957919" inputmode="decimal" size="9"></label>
+          <label class="field"><input type="text" id="geo-lng" value="112.543633" inputmode="decimal" size="9"></label>
+        </div>
+        <div class="row">
+          <label class="field">终点<input type="text" id="dest-geo-lat" value="37.859717" inputmode="decimal" size="9"></label>
+          <label class="field"><input type="text" id="dest-geo-lng" value="112.581822" inputmode="decimal" size="9"></label>
+        </div>
+        <p class="hint">
+          顺序都是<b>纬度, 经度</b>，坐标系 WGS-84（端侧 GPS 的原生坐标系）。
+          真实地图（百度）<b>只认坐标、不认地名</b> —— 「太原站」这种名字得先地理编码，
+          本项目还没做。所以目的地坐标留空时不会瞎猜，而是<b>如实降级</b>到内置演示路网
+          并播报说明。
+        </p>
+      </details>
+
+      <!-- 地图默认**收起**（2026-09-23 调整）。
+           ★ 它占 220px，而交给它的用户根本看不到屏幕 —— 目标用户用不上，
+             只有陪同者与答辩演示需要。省下的空间全给上面的播报流。
+           ★ 折叠用 `max-height` 而**不是** `<details>`：`<details>` 关闭时
+             内容 display:none，地图容器就没有布局高度，百度 GL 会**静默
+             不渲染**（正是 app.css 里 .map-stage 注释警告的那个坑）。
+             max-height 折叠会让容器一直保有布局高度，GL 量得到尺寸。 -->
+      <div class="fold" id="mapFold">
+        <button class="fold-head" type="button" data-fold
+                aria-expanded="false" aria-controls="mapBody">
+          <i class="chev" aria-hidden="true"></i>
+          <span>路线地图</span>
+          <small id="map-src">准备中…</small>
+        </button>
+        <div class="fold-body" id="mapBody">
+          <div class="map-stage">
+            <div id="map"></div>
+            <svg id="map-svg" hidden aria-label="路线示意图"></svg>
+            <p class="map-msg" id="map-msg">正在准备地图…</p>
+          </div>
+          <p class="hint">
+            底图来自百度 JSAPI GL（CDN 加载）。<b>断网或没配 <code>BAIDU_BROWSER_AK</code>
+            时退回无底图示意图</b>，几何仍然是真的。
+          </p>
+        </div>
+      </div>
+    </section>
+
+<!-- ---------------- 播报流（主） ---------------- -->
+    <section class="card feed-card">
+      <div class="card-head">
+        <h2>播报<small>最新的在最上面</small></h2>
+        <div class="feed-tools">
+          <div class="chips" id="filters">
+            <button class="chip on" data-min="0">全部</button>
+            <button class="chip" data-min="2">重要+</button>
+            <button class="chip" data-min="3">紧急</button>
+          </div>
+        </div>
+      </div>
+      <!-- ★ role="log" + aria-live 是给**读屏**（TalkBack / VoiceOver）用的：
+           这一页自带 TTS 朗读（speak()），两条声音通道会打架 —— 所以
+           `aria-live` 由 ui.js 跟着 TTS 开关走：TTS 开 → off（别双读），
+           TTS 关 → polite（把播报交给读屏）。见 ui.js::setTts()。
+           容器本身可聚焦，读屏用户也能主动进来逐条读。 -->
+      <div class="feed" id="feed" role="log" aria-label="播报流，最新的在最上面"
+           aria-live="off" tabindex="0">
+        <div class="empty">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 5 6.5 9H3v6h3.5L11 19zM15.5 8.5a5 5 0 0 1 0 7" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+          <p>还没有播报</p>
+          <p class="dim">系统出声后，这里按时间倒序列出来</p>
+        </div>
+      </div>
+      <div class="row feed-foot">
+        <button class="btn ghost" id="pauseBtn" aria-pressed="false">暂停播报</button>
+        <button class="btn ghost" id="clearBtn">清空</button>
+        <!-- ★ 语速。不是花活：中文 TTS 约 250ms/字，一条 15 字的播报要念 3.7 秒
+             （design.md D5 自己算过），而播报是按场景节奏来的 —— 1× 时耳朵很容易
+             落后现实。盲人用户普遍把读屏开到 1.5–2×，这是习惯不是偏好，
+             所以这一档必须能调，而且换了要当场念一句给他听。 -->
+        <button class="btn ghost" id="rateBtn" aria-label="播报语速 1×，点击换下一档">语速 1×</button>
+      </div>
+    </section>
+
+<!-- ---------------- 意外统计（给陪同者/家属看） ----------------
+         ★ 盲人用户看不到这一屏，所以它不是产品主界面的一部分 —— 但它
+           回答的是陪同者最想知道的问题：「这次出门出了几次事」。
+         ★ 分两组：意外 = 已经发生的事（次数少，每个都要紧）；
+           预警 = 系统替他躲过去的事（次数多，混在一起会让"意外 8 次"
+           这种数字失去意义）。判据取 detail 里的既有字段，见 js/incidents.js。 -->
+    <section class="card incidents">
+      <div class="inc-head">
+        <h2>意外统计<small>本次会话</small></h2>
+        <button class="btn ghost sm" id="incReset">清零</button>
+      </div>
+      <dl class="inc-list">
+        <dt>意外</dt><dd id="incAccidents">无</dd>
+        <dt>预警</dt><dd id="incWarnings">无</dd>
+      </dl>
+    </section>
+</div>
+
+  <!-- ---------------- 底部操作栏 ---------------- -->
+  <!-- 底部栏：播报开关 + **求助/取消的第二个入口**（2026-09-23）。
+       ★ 求助按钮**上下都有**，这是刻意的冗余，不是重复：
+         顶部那个满足「一直都在最顶端」（视觉上最显眼）；
+         底部这个在拇指位（盲人用户靠肌肉记忆摸按钮，单手时够得到）。
+       ★ 而且项目自己的契约文档就写着理由：《api-contract.md》§4.2
+         「冗余触发是安全系统的基本要求 —— **单一触发通道等于单点故障**」。
+         一个求助按钮在紧急时够不到，就等于没有。 -->
+  <nav class="tabbar" aria-label="常用操作">
+    <!-- ★ 这是**最要紧的一个开关**（这一页的全部价值就是出声），而且要靠
+         肌肉记忆摸到 —— 所以：位置固定在左下、图标随状态换形（喇叭 / 喇叭带斜杠），
+         文字跟着变，颜色只作第三重编码。看不见屏幕也能确认自己按到了什么。 -->
+    <button class="btn ghost tab" id="ttsBtn" aria-pressed="true" title="用浏览器 TTS 念出播报">
+      <svg class="ico-on" viewBox="0 0 24 24" aria-hidden="true"><path d="M11 5 6.5 9H3v6h3.5L11 19zM15.5 8.5a5 5 0 0 1 0 7M18.5 6a8.5 8.5 0 0 1 0 12" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+      <svg class="ico-off" viewBox="0 0 24 24" aria-hidden="true"><path d="M11 5 6.5 9H3v6h3.5L11 19zM16 9.5l5 5M21 9.5l-5 5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+      <span id="ttsTxt">声音：开</span>
+    </button>
+    <button class="btn sos" data-route="/v1/emergency/sos"
+            data-body='{"extra":{"index":1,"kind":"sos"}}'>一键求助</button>
+    <button class="btn ghost tab" data-route="/v1/emergency/cancel"
+            data-body='{"extra":{"kind":"cancel"}}'>取消求助</button>
+  </nav>
+</div>
+
+<!-- ================================================================
+     紧急全屏 —— priority 3 的播报会顶到最前面
+     ================================================================ -->
+<div class="emg" id="emg" hidden role="alert" aria-live="assertive">
+  <div class="emg-in">
+    <p class="emg-k">紧急</p>
+    <p class="emg-txt" id="emgText"></p>
+    <button class="btn emg-ok" id="emgOk">我知道了</button>
+    <!-- ★ 必须写出来：`#emg` 铺满全屏且已绑了 onclick（app.js），
+         点黑暗区域任意位置都能关 —— 但空黑区域看起来不可点，没人会去试。
+         对看不见屏幕的用户，这条提示更是唯一的线索。 -->
+    <p class="emg-hint">点屏幕<b>任意位置</b>也能关闭</p>
+  </div>
+</div>
+
+<!-- ================================================================
+     ② 开发者面板 —— 测试件，默认隐藏（?dev=1 或点右上角 ⚙）
+     ================================================================ -->
+<div class="dev" id="devPanel" hidden>
+  <div class="dev-bar">
+    <span class="pill tiny">开发者模式</span>
+    <span class="dim">以下是<b>契约验证</b>用的测试件，交付形态里不显示。
+      地址栏 <code>?dev=0</code> 或再点一次 ⚙ 收起。</span>
+    <button class="btn ghost" id="devClose">收起</button>
+  </div>
+
+  <section class="stats" aria-label="本次会话统计">
+    <div class="stat"><span class="k">收到播报</span><span class="v" id="stTotal">0</span></div>
+    <div class="stat"><span class="k">紧急</span><span class="v warn" id="stCritical">0</span></div>
+    <div class="stat"><span class="k">已过期</span><span class="v" id="stExpired">0</span></div>
+    <div class="stat"><span class="k">闸门丢弃</span><span class="v" id="stDropped">0</span></div>
+    <div class="stat"><span class="k">发帧</span><span class="v" id="stFrames">0</span></div>
+  </section>
+
+  <main>
+    <!-- ==================== 左：帧源与控制 ==================== -->
+    <div class="col">
+
+      <section class="card">
+        <h2>帧源<small>已在单独一页</small></h2>
+        <p class="hint">
+          视频抽帧、发帧频率、单张图片、摄像头占位，全部搬到了
+          <a href="/static/sender.html"><b>帧源模拟器</b></a>（同一端口下的子页）。
+        </p>
+        <p class="hint">
+          <b>为什么要分开</b>：帧源属于<b>设备端</b>（真机上是摄像头），
+          而这一页服务的是<b>看不见屏幕</b>的人 —— 视频条哪怕只有 88px，
+          也是从播报流和求助按钮那里拿走的。分开之后两边还能各走各的：
+          模拟器在笔记本上喂帧、播报界面在手机上看结果。
+        </p>
+        <p class="hint">
+          ★ <b>没有帧源时，播报流永远是空的</b> —— 那不是这一页坏了。
+          先开模拟器点「开始发帧」，再回来看这里。
+        </p>
+        <div class="row">
+          <a class="btn primary" href="/static/sender.html">打开帧源模拟器</a>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>其余路由<small>不带图像</small></h2>
+        <div class="row">
+          <button class="btn" data-route="/v1/safety/fall" data-body='{"extra":{"index":1,"kind":"fall_signal"}}'>跌倒信号</button>
+          <button class="btn" data-route="/v1/emergency/cancel" data-body='{"extra":{"kind":"cancel"}}'>取消求助</button>
+          <button class="btn" data-route="/v1/emergency/tick" data-body='{"now_ms":9999999999999}'>推进时钟</button>
+        </div>
+        <p class="hint">
+          「一键求助」在手机视图里（那是产品功能，不是测试件）。
+        </p>
+        <p class="hint">
+          「推进时钟」发的是 <code>now_ms=9999999999999</code>（公元 2286 年），
+          用来强行跑完跌倒 / 求助的升级链。闸门不会因此卡住 —— 见
+          <code>tests/test_api.py::test_far_future_tick_does_not_wedge_the_gate</code>。
+        </p>
+      </section>
+    </div>
+
+    <!-- ==================== 右：服务状态与日志 ==================== -->
+    <div class="col">
+      <section class="card">
+        <div class="card-head">
+          <h2>服务状态<small>GET /v1/health</small></h2>
+        </div>
+        <div class="log" id="devStatus">—</div>
+      </section>
+
+      <section class="card log-card">
+        <div class="card-head">
+          <h2>请求日志<small>闸门结果与异常</small></h2>
+          <span class="pill tiny" id="logTail">—</span>
+        </div>
+        <div class="log" id="log"></div>
+      </section>
+    </div>
+  </main>
+</div>
+
+<div class="toast" id="toast" hidden></div>
+
+<!-- ★ 启动自检 —— 唯一一段 classic 脚本，**必须排在入口之前**。
+     起因（2026-09-23）：入口（或它 import 的任何一个模块）只要有一处没跑
+     起来，整个模块图都不执行，页面停在初始文案上（「连接中…」「检查中」
+     「准备中…」）—— 看起来像网络慢，实际上一行 JS 都没跑，除了控制台
+     没有任何提示。这类沉默失效正是本项目最不能接受的，所以由它来兜底。
+     实现见 /static/js/boot-check.js（不碰业务，只把第一个错误写到页面上）。 -->
+<script src="/static/js/boot-check.js"></script>
+
+<!-- 入口。原生 ES modules，零构建 —— 仍是"直接打开就能跑"。
+     分模块的原因见 web/js/main.js 的头注释：按 index.html 已经划好的
+     「产品 / 调试」界线拆，改一处不必翻遍整个文件。
+
+     ★ 除上面那段自检外只需要这一个 <script>：map.js 也是模块，由 main.js
+       import 进来，加载顺序交给模块图，不再依赖「谁写在前面」。
+       （map.js 仍是唯一依赖第三方运行时的文件，且自带无底图降级。） -->
+<script type="module" src="/static/js/main.js"></script>
+</body>
+</html>
