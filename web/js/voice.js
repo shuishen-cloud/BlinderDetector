@@ -52,6 +52,20 @@ const TARGET_RATE = 16000;
 //: 到点自动停并按这一段落识别，同时**说出来** —— 静默截断等于偷偷丢用户的话。
 const MAX_RECORD_MS = 15_000;
 
+/** ★ 演示脚手架：识别不出来时兜底的目的地。
+ *
+ *  现在识别还不准，演示时一旦没听清，整条「语音 → 路线」就断在那里，
+ *  没法往下讲。所以先兜一个固定终点把路跑通，识别换成更准的模型之后
+ *  删掉这一块即可 —— **摘除方式就是把下面这行改成 `""`**，
+ *  `complain()` 里的分支会自己失效，其余代码一行不用动。
+ *
+ *  ★ 但即便降级也**必须念出来**、必须在输入框上留痕：
+ *  静悄悄地塞一个用户没说的地名，正是 `app/core/asr/none.py` 警告过的那种事
+ *  ——「用户说的可能是『北京西站』，而他会照着一句凭空来的地名走下去」。
+ *  降级本身不是问题，**不被察觉的**降级才是。
+ */
+const DEMO_FALLBACK_DEST = "太原站";
+
 /** 浏览器给的构造器。Chrome / Edge 有前缀版，Safari 也有；Firefox 至今没有。 */
 function RecogCtor() {
   return window.SpeechRecognition || window.webkitSpeechRecognition || null;
@@ -95,24 +109,40 @@ function paint(btn, state) {
  *    就等于把那条路复制成两份，改一处另一处会静默不一致 —— 这个项目刚在
  *    `.video-strip` 上栽过同类跟头。
  */
-function handOver(text) {
+function handOver(text, { degraded = false, why = "" } = {}) {
   $("talkBtn").classList.remove("warn");   // 认出来了就把降级标记摘掉
   $("dest").value = text;                  // ← 和打字完全同一个落点
-  log(`语音目的地：${text}`, "ok");
-  toast(`目的地：${text}`, "ok");
+  // 降级填进去的值要看得出来是降级 —— 否则它和「用户真说了太原站」长得一样。
+  $("dest").classList.toggle("demo-fallback", degraded);
+  log(`语音目的地：${text}${degraded ? `（演示兜底，原因：${why}）` : ""}`, degraded ? "dim" : "ok");
   haptic("short");
   // 先报一遍**听到了什么**再出发：识别错了的话，用户此刻就能开口纠正，
   // 而不是等路线播报出来才发现去的是别的地方。
-  speak(`目的地：${text}`, { priority: 2, interrupt: true });
+  // ★ 降级时这句话必须把「没听清」带上，否则用户会以为是自己说的。
+  // ★ 但**不能**把 `why` 原样拼进来：它可能是「请再按住说一次」，
+  //   而那与紧接着的自动出发自相矛盾 —— 用户会以为还得再按一次。
+  //   确切原因进 `log`（给调试的人）和 `toast`（给看得见的人）就够了。
+  const said = degraded ? `没听清，先按${text}导航` : `目的地：${text}`;
+  toast(said, degraded ? "warn" : "ok");
+  speak(said, { priority: 2, interrupt: true });
 
   // 让「目的地：X」这句话先出去，再让请求跑起来（路线播报随后接上）。
   setTimeout(() => submitRoute(), 0);
 }
 
-/** 没听清 / 没权限：都要**说出来**，不能安安静静地什么都不做。 */
+/** 没听清 / 没权限：都要**说出来**，不能安安静静地什么都不做。
+ *
+ *  ★ 开了演示兜底（见 `DEMO_FALLBACK_DEST`）时改走 `handOver()`：那时
+ *    不能再念 `msg` ——「没听清，请再按住说一次」和紧接着的自动出发
+ *    自相矛盾，用户会以为还得再按一次，而路线其实已经在跑了。
+ */
 function complain(msg, kind = "err") {
   toast(msg, kind);
   log(`语音输入：${msg}`, "err");
+  if (DEMO_FALLBACK_DEST) {
+    handOver(DEMO_FALLBACK_DEST, { degraded: true, why: msg });
+    return;
+  }
   speak(msg, { priority: 2, interrupt: true });
   haptic("double");
 }

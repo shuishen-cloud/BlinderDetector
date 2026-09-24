@@ -682,6 +682,12 @@ video { display: block; width: 100%; }
    颜色只是第三重编码：播报流里那条 localNote 把原因和「请直接打字」说全了。 */
 .phone .btn.hold.warn { color: var(--warn); border-color: rgba(251, 191, 36, .45); }
 
+/* 演示兜底填进去的目的地（见 js/voice.js 的 DEMO_FALLBACK_DEST）——
+   它和「用户真说了太原站」**必须长得不一样**，否则没人看得出这是降级，
+   而那正是「凭空来的地名被当成现状」的入口。
+   ★ 颜色只是第三重编码：toast 和 TTS 那两路都会把「没听清」说出来。 */
+.phone #dest.demo-fallback { color: var(--warn); border-color: rgba(251, 191, 36, .45); }
+
 /* 起点显示框（2026-09-23 改）：它既是「起点是从哪算的」的读数，也是那个
    重新定位的按钮 —— 两件事本来就是同一件。
    ★ 底色压暗、左对齐：让它读起来像一块**读数框**，而不是又一颗要按的按钮

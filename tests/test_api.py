@@ -961,10 +961,37 @@ def test_voice_hands_the_text_to_the_existing_nav_path(client):
     assert "目的地：" in js, "要先把听到的内容念一遍再出发"
 
     # 顺序：写入 →（念一遍）→ 出发
+    # ★ 念的是变量 `said`：正常路径念「目的地：X」，演示兜底那条念
+    #   「没听清，先按X导航」—— 两条都必须先出声，见下一个用例。
     write = js.index('$("dest").value = text')
-    speak_at = js.index("speak(`目的地：")
+    speak_at = js.index("speak(said")
     go_at = js.index("submitRoute()", speak_at)
     assert write < speak_at < go_at, "顺序必须是「落进输入框 → 报一遍 → 出发」"
+
+
+def test_demo_fallback_destination_is_announced(client):
+    """★ 演示兜底（识别不出来时改用固定终点）**必须说出来**，不许静默。
+
+    识别还不准，演示时兜一个固定终点把「语音 → 路线」跑通是可以的。但静悄悄
+    塞一个用户没说的地名，正是 `app/core/asr/none.py` 警告过的那种事 ——
+    「用户说的可能是『北京西站』，而他会照着一句凭空来的地名走下去」。
+    降级本身不是问题，**不被察觉的**降级才是。
+
+    这条钉三件事：兜底值有名字（日后好摘）、念的话里带「没听清」（用户能纠正）、
+    输入框上有看得见的降级标记（陪同者看得出这一格不是用户说的）。
+    """
+    js = client.get("/static/js/voice.js").text
+
+    assert "DEMO_FALLBACK_DEST" in js, "兜底目的地要有具名常量，别散在字符串里"
+    assert "先按${text}导航" in js, "降级时念的话必须交代「没听清」"
+    assert "demo-fallback" in js, "输入框上要留降级标记"
+
+    # ★ 摘除方式：把常量改成空串，`complain()` 里的分支自己失效。
+    #   这条测试因此也钉住「摘掉之后不再念降级话术」——两边不会各说各话。
+    assert "if (DEMO_FALLBACK_DEST)" in js, "兜底要有一个能一键关掉的开关"
+
+    css = client.get("/static/app.css").text
+    assert "#dest.demo-fallback" in css, "降级标记要有可见样式，否则等于没标"
 
 
 def test_navigation_has_exactly_one_submit_path(client):
