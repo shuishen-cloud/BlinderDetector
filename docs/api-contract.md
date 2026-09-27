@@ -8,14 +8,18 @@
 ## 0. 一句话
 
 全系统只有两个数据结构：**`Frame`（输入）** 和 **`Announcement`（输出）**。
-业务路由一共十一条，其中**十条**「入 Frame，出 Announcement」（九条 JSON +
-一个 multipart 统一帧入口），四层的差异只体现在 `source` 字段和 `detail`
-的形状上。
+业务 `POST` 路由一共**九条**，其中**七条**「入 Frame，出 Announcement」
+（六条 JSON + 一个 multipart 统一帧入口），四层的差异只体现在 `source` 字段
+和 `detail` 的形状上。
 
-唯一的例外是 **`POST /v1/asr`**（见 §4.3）：它出的是**文本**（数据），不是播报。
-端侧要拿它填进目的地那一格，再走导航那条路。把识别结果塞进 `announcements`
-会让「目的地的名字」和「系统要说的话」混成一条 —— 前者进输入框，后者进播报流，
-两件事的去处完全不同。
+另外两条**不走这个形状**：
+
+- **`POST /v1/emergency/tick`**（见 §4）不吃 `Frame` —— 它推进紧急状态机的时钟，
+  入参是**可选**的 `{"now_ms"}`。
+- **`POST /v1/asr`**（见 §4.3）出的是**文本**（数据），不是播报。端侧要拿它填进
+  目的地那一格，再走导航那条路。把识别结果塞进 `announcements` 会让「目的地的
+  名字」和「系统要说的话」混成一条 —— 前者进输入框，后者进播报流，
+  两件事的去处完全不同。
 
 > 契约版本 1.0　｜　兼容性原则：只加可选字段，不改字段名和类型，不删字段。
 
@@ -293,7 +297,7 @@ idle ──冲击+姿态异常──> suspected ──倒计时归零──> con
 | `POST` | `/v1/navigation/route` | `Frame` | `Announcement` | 第三层 智能导航 |
 | `POST` | `/v1/emergency/sos` | `Frame` | `Announcement` | 第四层 一键求助 |
 | `POST` | `/v1/emergency/cancel` | `Frame` | `Announcement` | 取消求助 / 取消跌倒确认 |
-| `POST` | `/v1/emergency/tick` | `now_ms` | `Announcement[]` | 推进紧急状态机时钟 |
+| `POST` | `/v1/emergency/tick` | `{"now_ms"}`（可选） | `{"now_ms","announcements","sent"}` | 推进紧急状态机时钟。**不吃 `Frame`**，回包也与上面那七条不同 |
 | `POST` | `/v1/frame` | multipart | `Announcement` | ★ 统一帧入口（上传图像） |
 | `POST` | `/v1/asr` | multipart | `{"text","impl","degraded"}` | ★ 语音识别（音频 → 文本）。**不是**「入 Frame 出 Announcement」，见 §4.3 |
 | `GET` | `/v1/health` | — | 降级状态 | |
@@ -302,6 +306,31 @@ idle ──冲击+姿态异常──> suspected ──倒计时归零──> con
 
 **路由可能返回空的 `announcements` 数组**（比如前方无障碍），这不代表出错。
 「没出声」和「系统哑了」的区分靠 `/v1/health` 和降级通告。
+
+**七条路由共用一个回包信封** —— 它们（含 `/v1/frame`）的回包结构完全一致，
+客户端只需写一套解析：
+
+```json
+{
+  "frame": { "frame_id": "f0001", "ts": 1758326400000, "source": "safety", "extra": {} },
+  "announcements": [ { "id": "…", "source": "safety", "priority": 2, "text": "…" } ],
+  "arbiter": {
+    "sent": ["…"],
+    "dropped": [ { "id": "…", "reason": "dup" } ]
+  },
+  "degraded": "SafetyLayer:RuntimeError"
+}
+```
+
+| 字段 | 说明 |
+| :--- | :--- |
+| `frame` | 回显本次请求的 `Frame`，含服务端补的 `frame_id` / `ts` |
+| `announcements` | 过完播报闸门后**真正放行**的播报，可能是空数组 |
+| `arbiter.sent` | 闸门**至今**放行过的全部 id —— 不是「本次的」。它随进程运行一直增长，见《文档-设计中的问题》§2.2 |
+| `arbiter.dropped` | 最近 5 条被丢弃的 `{id, reason}` |
+| `degraded` | **只在某一层抛异常时出现**，形如 `层类名:异常类名`。此时接口仍回 200，并另推一条 `source=system` 的播报 —— 见 §6 |
+
+`/v1/emergency/tick` 是例外，它回 `{"now_ms","announcements","sent"}`（见上表）。
 
 ### 4.0 统一帧入口 `POST /v1/frame`
 
@@ -319,8 +348,9 @@ idle ──冲击+姿态异常──> suspected ──倒计时归零──> con
 | `ts` | 否 | 毫秒时间戳，不填则取当前时间 |
 | `extra` | 否 | JSON 对象字符串，如 `{"index":1}` |
 
-入参不合法返回 **400** 且响应体为 `{"error": "..."}`（缺 `image`、`source`
-不在允许集合、`extra` 不是 JSON 对象、`ts` 非整数、空文件）。
+入参不合法返回 **400** 且响应体为 `{"error": "..."}`，一共**七种**：multipart
+解析失败、缺 `image`（或 `image` 是文本字段而非文件）、`source` 不在允许集合、
+`image` 是空文件、`extra` 不是合法 JSON、`extra` 不是 JSON 对象、`ts` 不是毫秒整数。
 
 > **为什么上传的字节要落盘成临时文件？** 因为 `image_ref` 的语义是
 > 「服务端路径」，`layers/perception.py` 用 `os.path.isfile()` 找它。
@@ -339,6 +369,7 @@ idle ──冲击+姿态异常──> suspected ──倒计时归零──> con
 | 导航 | `geo` | `{"lat": 39.9, "lng": 116.4}` 起点坐标（JSON 对象，**WGS-84**） |
 | 导航 | `destination_geo` | 目的地坐标（同上格式）。★ 真实地图 API **只认坐标、不认地名**，不传就只能用内置演示路网 |
 | 导航 | `avoid` | 要避开的障碍，默认 `["overpass","underpass","stairs"]` |
+| 导航 | `max_steps` | 一次播报几步，默认 `1`。★ 一口气把五步念完，用户一步都记不住；非法值收敛成 `1` |
 | 求助 | `kind` | `fall_signal` \| `sos` \| `cancel` |
 | 求助 | `signal` | 跌倒传感器窗口，见下 |
 | 求助 | `event_id` | 事件标识，不填则由 `frame_id` 推导 |
@@ -373,7 +404,7 @@ idle ──冲击+姿态异常──> suspected ──倒计时归零──> con
 | 字段 | 必填 | 说明 |
 | :--- | :--- | :--- |
 | `audio` | ★ 是 | 音频文件本体。实测通过的是 16 kHz 单声道 PCM16 WAV |
-| `format` | 否 | 容器格式。不填则按文件名后缀猜，再猜不到按 `wav` |
+| `format` | 否 | 容器格式。**显式声明优先**，其次看文件名后缀；两者都空才按 `wav`。声明了但不在白名单 → **400**，不会回退去猜后缀 |
 
 `format` 白名单：`wav` `mp3` `m4a` `aac` `ogg` `opus` `amr` `flac` `webm`。
 白名单之外的值返回 **400**，**不静默替换**（`format` 会进发给厂商的请求体，
