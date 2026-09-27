@@ -4,16 +4,24 @@
 
 手机摄像头看世界，AI 用自然语言说给视障人士听。
 
-> **当前阶段：四层逻辑已实现，外部依赖仍是 mock，各组并行开工。**
+> **当前阶段：四层逻辑已实现，各组并行开工；默认不依赖任何外部服务**
+> （`VLM_PROVIDER=mock` / `DETECTOR=mock` / `ROUTER=builtin` / `ASR=none`，
+> 见 `app/config.py`）。
 >
 > 已写实：风险分级、措辞生成、跌倒状态机、求助状态机、无障碍路线过滤。
-> 未接入：云端 VLM、检测模型、地图 API、短信/推送通道。
+> 已接实现、但**都不是默认值**（换 `.env` 才生效）：云端 VLM
+> （`VLM_PROVIDER=dashscope`）、百度地图步行路线（`ROUTER=baidu`）、
+> Qwen-VL 当障碍物检测器（`DETECTOR=qwen_vl`，★ **违反 D2**，理由见下文）、
+> 服务端语音识别（`ASR=dashscope`）。
+> 未接入：**短信 / 推送通道** —— 求助升级链只推进状态和措辞，
+> 真正把消息送出去仍是下一步（`app/core/rules/sos.py` 文件头）。
 >
 > | 想知道 | 去哪看 |
 > | :--- | :--- |
 > | 怎么跑起来 | 本文档下方 |
 > | 接口字段 | [docs/api-contract.md](docs/api-contract.md) |
 > | **为什么这么设计** | [docs/design.md](docs/design.md) |
+> | 测试跑了什么、结果如何 | [测试结果.md](测试结果.md)（★ 钉在某个提交上，会过时） |
 > | 谁做什么、进度 | [工作管理.md](工作管理.md) |
 > | 设计中的已知问题 | [文档-设计中的问题.md](文档-设计中的问题.md) |
 > | **接下来做什么、要改哪些接口** | [新功能与接口改动.md](新功能与接口改动.md) |
@@ -27,8 +35,14 @@
 pip install -r requirements.txt      # 纯 Python，无编译
 cp .env.example .env                 # 不填任何 key 也能完整跑通
 
-bash scripts/smoke.sh                # 一键自检：起服务 -> 打全部路由
+bash scripts/smoke.sh                # 一键自检：起服务 -> 健康检查 + 五条业务路由 + 升级链
 ```
+
+> `smoke.sh` 打的是健康检查 + 五条业务路由（`describe` / `analyze` / `fall` /
+> `route` / `sos`，其中 `analyze` 打两次）+ 升级链（`/v1/emergency/tick`）。
+> **它不是「打全部路由」**：`/v1/frame`（要图像）、`/v1/asr`（要音频）、
+> `/v1/emergency/cancel` 和 `/v1/frontend-config` 都不在它的覆盖里 ——
+> 这几条见下面「测试」一节。
 
 手动起服务：
 
@@ -65,7 +79,7 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 
 | | 是什么 | 里面有什么 |
 |---|---|---|
-| ① 手机视图 `#app` | 交付形态的形状：按手机使用逻辑排 | 播报流（最新在最上面）、导航 + 路线地图、底部大按钮（播报开关 / 一键求助 / 取消求助）。紧急播报（`priority=3`）**顶成全屏**，`ttl` 到点自动收起 |
+| ① 手机视图 `#app` | 交付形态的形状：按手机使用逻辑排 | 播报流（最新在最上面）、导航 + 路线地图、底部大按钮（播报开关 / 一键求助 / 取消求助）。只有 `source === "emergency"` 且 `priority >= 3`（跌倒 / 求助）才**顶成全屏**，`ttl` 到点自动收起 |
 | ② 开发者面板 `#devPanel` | **契约验证用的测试件，默认 `hidden`** | 其余路由、请求日志、会话统计、`/v1/health` 明细 |
 
 第二层的入口有两个：地址栏 `?dev=1`，或右上角 ⚙；选择记在 `localStorage`，
@@ -289,15 +303,23 @@ Frame         所有接口的输入
 Announcement  所有接口的输出
 ```
 
-十条路由全部「入 `Frame`，出 `Announcement`」（九条 JSON + 一个 multipart 统一帧入口），四层的差异只体现在
-`source` 字段和 `detail` 的形状上。端侧拿到播报**只播 `text`** 加执行
-`haptic` 震动，不需要理解 `detail` 的结构 —— 但**要读 `priority` /
-`interrupt` / `ttl_ms` 做播放排序和到期判断**（详见 design.md D11）。
+业务 `POST` 路由一共**九条**，其中**七条**「入 `Frame`，出 `Announcement`」
+（六条 JSON + 一个 multipart 统一帧入口），四层的差异只体现在 `source` 字段
+和 `detail` 的形状上。端侧拿到播报**只播 `text`** 加执行 `haptic` 震动，
+不需要理解 `detail` 的结构 —— 但**要读 `priority` / `interrupt` / `ttl_ms`
+做播放排序和到期判断**（详见 design.md D11）。
+
+另外两条**不走这个形状**：`POST /v1/emergency/tick`（不吃 `Frame`，
+入参是**可选**的 `{"now_ms"}`，它推进紧急状态机的时钟）和 `POST /v1/asr`
+（出的是**文本**，不是播报 —— 端侧拿它填进目的地那一格）。理由见
+[docs/api-contract.md](docs/api-contract.md) §0。
 
 几条关键规则（完整推导见 [docs/design.md](docs/design.md)）：
 
 - **感知与安全是两条解耦的流水线。** 云端 VLM 单次调用 1–3 秒，对避障来说
   完全不可接受，所以第二层绝不能走 VLM。这是本项目最重要的架构主张。
+  （唯一一处明知故犯的例外是 `DETECTOR=qwen_vl`，**不是默认值** ——
+  见下文「`qwen_vl`：能用，但它违反 D2」。）
 - **TTL 过期即丢。** 迟到 3 秒的「前方 2 米有台阶」比不播更危险。
   由**端侧**执行（契约里 `ttl_ms` 就是「从端收到起算」）—— 服务端不排队，
   也就不存在「排到他时已过期」这回事。
@@ -322,6 +344,7 @@ app/
     envelope.py         统一信封：入 Frame，出 Announcement
     hub.py              WS 播报通道（/v1/stream）
     uploads.py          ★ 统一帧入口 POST /v1/frame（multipart）
+    speech.py           ★ POST /v1/asr（音频 → 文本）—— 唯一一条不出 Announcement 的业务入口
     routes.py           路由表 + tick / health / 前端配置
   core/
     registry.py         实现注册表
@@ -337,6 +360,7 @@ app/
     images.py           读帧图像 + 按魔数判 MIME（第一层和第二层共用）
     providers/          VLM 实现（mock / dashscope / zhipu / openai）
     detectors/          障碍物检测器实现（mock / qwen_vl）
+    asr/                ★ 语音识别实现（none 不接 / dashscope），服务端识别通道
     sources/            输入源（video / images）
     routers/            ★ 路线数据源（builtin 内置假路网 / baidu 百度地图）
   mock/fixtures.py      契约样例数据
@@ -348,6 +372,9 @@ web/
   js/
     main.js             播报界面入口：只装配，不放业务
     ui.js               ★ 产品界面：播报流 / 紧急全屏 / 提示 / 语音 / 筛选暂停清空
+    nav.js              ★ 导航卡片：起点读数 + 目的地**唯一**的一条提交路径
+    voice.js            ★ 按住说话：录音、端侧转码、选识别通道（服务端优先）
+    speech.js           ★ 播报出口的端侧那一半：队列、抢占、语速、可用性自检
     dev.js              ★ 调试件：面板开关 / 其余路由 / 健康 / 统计
     sender.js           ★ 帧源模拟器（在 sender.html 里）：抓帧、上传、对照
     boot-check.js       ★ 启动自检：模块图没跑起来时把话说到页面上
@@ -557,11 +584,15 @@ ASR=whisper
 pytest -v
 ```
 
+**13 个文件、391 项**，全部离线（`conftest.py` 把各实现钉在 mock / none 上，
+不打网络）。
+
 | 文件 | 测什么 |
 | :--- | :--- |
 | `test_contracts.py` | 契约形状、距离档位、去重键 |
 | `test_arbiter.py` | 闸门：去重窗口、升级突破去重、废数据 |
-| `test_api.py` | 全部路由的形状一致性、`/v1/frame` 上传（含 400 分支）、WebSocket 广播、静态托管 |
+| `test_api.py` | 全部路由的形状一致性、`/v1/frame` 上传（含 400 分支）、WebSocket 广播、静态托管、**端侧播报队列不许让耳朵落后于现实** |
+| `test_asr.py` | `POST /v1/asr` 的形状（**出文本不出播报**）、失败也回 200、「没听清」与「没在听」必须分得开、端侧选通道 |
 | `test_risk.py` | 悲观距离分级、置信度门限、TTL |
 | `test_phrasing.py` | 不播数字、置信度对冲、短句降级 |
 | `test_scene.py` | 场景分类与去重粒度 |
@@ -570,6 +601,7 @@ pytest -v
 | `test_route.py` | 无障碍过滤、导航播报、**「已避开」与「请注意」的诚实性边界** |
 | `test_baidu_router.py` | 百度响应解析（含 status!=0、缺字段、空路线、turn_type 容错） |
 | `test_qwen_vl_detector.py` | 障碍物解析（模型乱讲话/编类型/坏距离）、**检测器哑了必须说出声** |
+| `test_vlm_provider.py` | 真实 VLM 回应的解析容错（代码围栏 / 前后夹话 / 坏 JSON 都要退化，不能把链路弄哑） |
 
 ---
 
