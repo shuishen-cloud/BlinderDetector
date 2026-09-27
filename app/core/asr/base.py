@@ -20,7 +20,7 @@ class ASRError(RuntimeError):
 #: 允许上传的容器格式。
 #:
 #: ★ `wav` 是**实测过**的那一个（16 kHz 单声道 PCM16，见 `docs/api-contract.md`
-#:   §4.2）。其余几个是厂商文档列的常见格式 —— 列出来是为了让「换个客户端录音
+#:   §4.3）。其余几个是厂商文档列的常见格式 —— 列出来是为了让「换个客户端录音
 #:   实现」不必改服务端，但只有 wav 有实测样本背书。
 ALLOWED_FORMATS: frozenset[str] = frozenset({
     "wav", "mp3", "m4a", "aac", "ogg", "opus", "amr", "flac", "webm",
