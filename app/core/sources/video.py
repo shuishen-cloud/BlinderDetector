@@ -44,6 +44,7 @@ class VideoFileSource:
     def __init__(
         self,
         path: str = "data/demo.mp4",
+        # path: str = "data/BlinderRoad.mp4",
         fps: float = 1.0,
         source: str = SOURCE_PERCEPTION,
     ) -> None:

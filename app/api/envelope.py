@@ -44,9 +44,12 @@ def frame_from_body(
 class Envelope:
     """跑完一层之后要做的两件事：过闸门推播报、按统一信封回包。"""
 
-    def __init__(self, hub: "Hub", arbiter: "Arbiter") -> None:
+    def __init__(self, hub: "Hub", arbiter: "Arbiter", on_degraded=None) -> None:
         self.hub = hub
         self.arbiter = arbiter
+        #: 层跑挂时调用（真实服务一定会失败：超时/限流/欠费/网络）。
+        #: 默认 None = 不通告，但至少不回 500 —— 见 respond()。
+        self.on_degraded = on_degraded
 
     async def publish(self, anns: list[Announcement], now: int) -> list[Announcement]:
         """过闸门，放行的推给前端。返回真正发出去的。
@@ -67,18 +70,37 @@ class Envelope:
 
         JSON 路由和 `/v1/frame` 复用这条尾巴，所以两者的回包结构
         （`frame` / `announcements` / `arbiter`）永远一致。
+
+        ★ 层跑挂时**不回 500，而是显式降级**：
+          原始实现让异常冒到 Starlette，客户端拿到 500 且一条播报都没有 ——
+          用户听到的是「安静」，而安静会被理解成「环境安全」。
+          这是这类系统最危险的失效模式，所以失败必须**出声**。
         """
-        anns: list[Announcement] = await layer.handle(frame)
+        degraded: str | None = None
+        try:
+            anns: list[Announcement] = await layer.handle(frame)
+        except Exception as e:  # noqa: BLE001 —— 任何层失败都不该静默
+            anns = []
+            degraded = f"{layer.__class__.__name__}:{type(e).__name__}"
+            if self.on_degraded is not None:
+                try:
+                    await self.on_degraded(degraded)
+                except Exception:  # noqa: BLE001 —— 通告失败不能反过来炸掉请求
+                    pass
+
         await self.publish(anns, frame.ts)
 
-        return JSONResponse({
+        body: dict[str, Any] = {
             "frame": frame.to_dict(),
             "announcements": [a.to_dict() for a in anns],
             "arbiter": {
                 "sent": sorted(self.arbiter.sent_ids),
                 "dropped": [{"id": a.id, "reason": r} for a, r in self.arbiter.dropped[-5:]],
             },
-        })
+        }
+        if degraded:
+            body["degraded"] = degraded
+        return JSONResponse(body)
 
     def handler(self, layer, source: str, default_extra: dict | None = None):
         """给纯 JSON 的 POST 路由做一个瘦包装。
