@@ -1,0 +1,28 @@
+# 构建上下文里不需要的东西。
+#
+# ★ .env 一定不能进去：镜像层是能被 `docker history` / `docker save` 翻出来的，
+#   把 dashscope key 烤进任何一层都等于泄露。运行时用 compose 的 env_file 传
+#   （见 docker-compose.yml）。
+.env
+
+.git
+.venv
+venv
+__pycache__
+*.py[cod]
+.pytest_cache
+
+# 测试与文档不进运行时镜像
+tests/
+docs/
+scripts/
+*.md
+
+# ★ 演示素材：demo.mp4 有几十兆，而它在服务器上本来就要单独拷
+#   （见 deploy/README.md），没必要占镜像层。
+data/frames
+data/*.mp4
+data/uploads
+
+# ★ 证书私钥绝不进镜像，只由 nginx 容器挂载。
+deploy/certs

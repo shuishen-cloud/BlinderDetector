@@ -504,7 +504,7 @@ idle ──冲击+姿态异常──> suspected ──倒计时归零──> con
 ## 7. 对接方式
 
 ```bash
-pip install -r requirements.txt
+pip install -r requirements.txt      # 运行时 + 测试；只要运行时用 requirements-prod.txt
 cp .env.example .env
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 bash scripts/smoke.sh

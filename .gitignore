@@ -15,6 +15,10 @@ data/*.mp4
 # 上传帧的临时落盘目录（见 main.py 的 POST /v1/frame）
 data/uploads/
 
+# 部署产物：证书私钥与 ACME 校验目录（见 deploy/README.md）
+deploy/certs/
+deploy/certbot-www/
+
 # 编辑器
 .vscode/
 .idea/

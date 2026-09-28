@@ -1,5 +1,7 @@
 # 灵眸伴途
 
+> 地图导航部分的 Pr 来自 [tan0908-star](https://github.com/tan0908-star)，界面优化的 Pr 来自 [yuehuawu416-cmyk](https://github.com/yuehuawu416-cmyk)，还有 [Datongwb](https://github.com/Datongwb) 对于审阅 Pr 的帮助。
+
 基于视觉语言模型的视障人士出行辅助系统 —— 后端原型。
 
 手机摄像头看世界，AI 用自然语言说给视障人士听。
@@ -32,7 +34,7 @@
 ## 快速开始
 
 ```bash
-pip install -r requirements.txt      # 纯 Python，无编译
+pip install -r requirements.txt      # 纯 Python，无编译（含 pytest）
 cp .env.example .env                 # 不填任何 key 也能完整跑通
 
 bash scripts/smoke.sh                # 一键自检：起服务 -> 健康检查 + 五条业务路由 + 升级链
@@ -388,6 +390,12 @@ data/                   生成的帧和视频；uploads/ 是上传帧的临时�
 scripts/                自检、跑视频、跌倒演示、WS 探针、契约导出
 tests/                  pytest
 docs/api-contract.md    自动生成的接口契约
+Dockerfile              应用镜像（单进程，理由见文件头）
+docker-compose.yml      应用 + nginx 两件套
+requirements-prod.txt   ★ 运行时依赖 —— 生产镜像只装这份
+deploy/
+  README.md             上线的五个前置步骤（HTTPS 是硬前置）
+  nginx.conf            TLS 终结 + WebSocket 转发
 ```
 
 **规则和编排是分开的**：`detectors/` 只回答「看到什么」，`rules/` 回答
@@ -605,6 +613,23 @@ pytest -v
 
 ---
 
+## 部署
+
+```bash
+docker compose up -d --build
+```
+
+★ **HTTPS 是硬前置，不是「最好有」**：浏览器只在 secure context 下暴露
+`getUserMedia`，站点跑在明文 HTTP 上时麦克风和摄像头被直接拒掉 —— 而语音是
+这个项目的入口。证书、密钥、演示素材、验收清单这五步见
+[deploy/README.md](deploy/README.md)，`docker compose` 之前必须先做完。
+
+应用**单进程**跑：紧急状态机与 `arbiter` 的已发 id 都在进程内存里，
+`--workers >1` 会把状态劈成互不相干的好几份且不报错。扩容得先做状态外置。
+路由目前**没有任何鉴权**，公网部署至少要自己加一层网关。
+
+---
+
 ## 环境说明
 
 当前开发环境是 **WSL / Linux（Python 3.13）**；早期开发在 Termux / Android
@@ -617,6 +642,6 @@ pytest -v
 
 **装 uvicorn 时不要带 `[standard]`** —— 会拉 httptools / uvloop 等 C 扩展。
 
-**但 WebSocket 库必须单独装**（已写进 `requirements.txt` 的 `wsproto`）。
+**但 WebSocket 库必须单独装**（已写进 `requirements-prod.txt` 的 `wsproto`）。
 不带 `[standard]` 的 uvicorn 没有任何 WS 实现，`/v1/stream` 会直接 404。
 `wsproto` 是纯 Python，满足上面的零编译约束；`websockets` 是 C 扩展 wheel，不行。

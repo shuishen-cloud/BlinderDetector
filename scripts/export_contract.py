@@ -389,7 +389,7 @@ DOC = f"""# 灵眸伴途 —— 接口契约
 ## 7. 对接方式
 
 ```bash
-pip install -r requirements.txt
+pip install -r requirements.txt      # 运行时 + 测试；只要运行时用 requirements-prod.txt
 cp .env.example .env
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 bash scripts/smoke.sh
