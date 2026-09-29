@@ -8,7 +8,7 @@ cd "$(dirname "$0")/.."
 # ★ 下面几个内联的 python3 -c 要打 ▶，Windows 控制台默认 GBK 会直接崩。
 export PYTHONIOENCODING="${PYTHONIOENCODING:-utf-8}"
 
-PORT="${PORT:-8000}"
+PORT="${PORT:-8013}"
 URL="http://127.0.0.1:$PORT"
 
 echo "==> 启动服务 (端口 $PORT)"
